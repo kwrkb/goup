@@ -145,6 +145,45 @@ func TestParseInstallArgs(t *testing.T) {
 	}
 }
 
+// TestIsAlreadyLatest guards the pre-flight peek that runUpdate uses to
+// skip sudo elevation when no write would occur. The regression it
+// prevents: pre-v0.3.0 `goup update` was a no-op without sudo when the
+// installed toolchain already matched the latest release, but v0.3.0's
+// CLI-layer maybeElevate initially ran before the no-op check inside
+// Update() and started prompting for a password on every invocation.
+func TestIsAlreadyLatest(t *testing.T) {
+	archive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goLATEST", 0)},
+	})
+	srv := newReleaseServer(t, "goLATEST", "go-latest.tar.gz", archive)
+	defer srv.Close()
+
+	t.Run("current matches latest", func(t *testing.T) {
+		root := t.TempDir()
+		writeVersionMarker(t, root, "goLATEST")
+		if !isAlreadyLatest(root, srv.URL) {
+			t.Errorf("expected true when current == latest")
+		}
+	})
+
+	t.Run("current is older", func(t *testing.T) {
+		root := t.TempDir()
+		writeVersionMarker(t, root, "goOLD")
+		if isAlreadyLatest(root, srv.URL) {
+			t.Errorf("expected false when current != latest")
+		}
+	})
+
+	// No VERSION marker: fall through so the real Update surfaces the
+	// underlying error instead of silently short-circuiting.
+	t.Run("missing VERSION file falls through", func(t *testing.T) {
+		root := t.TempDir()
+		if isAlreadyLatest(root, srv.URL) {
+			t.Errorf("expected false when VERSION file missing")
+		}
+	})
+}
+
 func TestHasHelpFlag(t *testing.T) {
 	cases := []struct {
 		name string

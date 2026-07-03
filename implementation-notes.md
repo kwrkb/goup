@@ -70,13 +70,21 @@ sudo なしで `goup update` を叩くと、旧実装はダウンロード（〜
 
 ## v0.3.0: 対話 TTY での自動 sudo 昇格
 
-### 昇格判定は install 前段（FetchAllReleases より前）で実行する
+### 昇格判定は install/rollback は前段一択、update は pre-flight peek で例外扱い
 
-`install <version>` の書き込み権限判定を「バージョン検証後」ではなく「コマンド起動直後」に置いた。トレードオフは advisor 相談で明示的に確認済み:
+`install <version>` と `rollback` の書き込み権限判定は「バージョン検証・backup 存在確認より前」に置いた。トレードオフは advisor 相談で明示的に確認済み:
 
-- **利点**: 判定ロジックを CLI 層の 1 箇所（`main.go` の `runUpdate`/`runInstall`/`runRollback`）に集約でき、`Install()` の内部フローに sudo 昇格を持ち込まずに済む。CI や非 TTY 環境では go.dev への API コール前に fast-fail するので帯域を無駄にしない。
-- **欠点**: `goup install <typo>` や `goup install <現行バージョン>`（no-op）でも sudo プロンプトが先に出る。今までは検証エラー / no-op で sudo 不要だった。
-- **判断**: CLI 層で 1 箇所に集約するメリット（テスト容易性・実装の単純さ）を優先。sudo プロンプトが不要と判明するのはレアケース（typo か no-op のみ）で、Ctrl-C で抜けるコストは実害無し。将来ユーザーからの苦情が出たら「バージョン検証だけ先にやってから昇格」への分割を検討する。
+- **利点**: 判定ロジックを CLI 層の 1 箇所に集約でき、`Install()` / `Rollback()` の内部フローに sudo 昇格を持ち込まずに済む。CI や非 TTY 環境では go.dev への API コール前に fast-fail するので帯域を無駄にしない。
+- **欠点**: `goup install <typo>` / `goup install <現行バージョン>`（no-op）/ `goup rollback` (backup 無し) でも sudo プロンプトが先に出る。今までは検証エラー / no-op で sudo 不要だった。
+- **判断**: いずれも低頻度ケースなので受容。Ctrl-C で抜けるコストは実害無し。
+
+**update は例外**: PR #3 レビューで codex が指摘した通り、`goup update` の「もう最新版」ケースは**高頻度**（CI で毎日 update を叩く運用、追従目的の日次実行など）で発生する。ここで毎回 sudo プロンプトが出る/`--no-sudo` で fast-fail するのは v0.2.0 からの明確な UX 回帰。
+
+対処: `runUpdate` の頭に `isAlreadyLatest(installRoot, baseURL)` の pre-flight peek を追加し、read-only な範囲で current == latest を判定してから `maybeElevate` を呼ぶ。既に最新なら "Already up to date" を出して exit 0、そうでなければ従来通り昇格 → `Update()` に進む。
+
+- **エラー時は fall-through**: `isAlreadyLatest` は網羅的エラーハンドリングを持たず、`FetchReleases` の network error 等を検知すると単に false を返す。「わからないから通常経路に流す」設計で、Update 本体が本物のエラーを surface する。
+- **重複 fetch のコスト**: 書き込みが必要なパスでは pre-flight で 1 回、Update 内で 1 回、sudo 後の再入で 1 回の計 3 回 `FetchReleases` が走る。ペイロード数 KB なので実害無し、Install/Rollback と実装対称性を優先しなかった理由でもある。
+- **install に同じ扱いをしない理由**: `goup install <same-version>` は idempotent script 用途で発生しうるが update ほど高頻度ではなく、実際に困ったら install にも同じ pre-flight を追加する（`Install()` の signature を弄らずに済むため YAGNI で先送り）。
 
 ### `syscall.Exec` + `os.Executable()` で PATH 剥奪を回避
 

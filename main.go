@@ -121,10 +121,48 @@ func runUpdate(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// Read-only pre-flight: if we are already at the latest stable
+	// release, do nothing and skip sudo elevation entirely. Pre-v0.3.0
+	// `goup update` was a no-op without sudo in this common case, and
+	// prompting for a password on every run to say "already up to date"
+	// is a regression the CLI layer must absorb because Update() itself
+	// only reaches its no-op branch after maybeElevate has already run.
+	//
+	// Any error from the pre-flight (network down, missing VERSION file,
+	// no archive for GOOS/GOARCH) falls through to the normal elevate +
+	// Update path so the real command surfaces the underlying error
+	// instead of a silent early return.
+	if isAlreadyLatest(defaultInstallRoot, defaultBaseURL) {
+		current, _ := CurrentVersion(defaultInstallRoot)
+		fmt.Printf("Already up to date: %s\n", current)
+		return nil
+	}
+
 	if err := maybeElevate(defaultInstallRoot, noSudo); err != nil {
 		return err
 	}
 	return Update(defaultInstallRoot, defaultBaseURL)
+}
+
+// isAlreadyLatest is the CLI-layer peek used by runUpdate to skip
+// elevation when no write would occur. Returns false on any error so
+// the caller falls through to the normal write path where the error
+// gets surfaced properly.
+func isAlreadyLatest(installRoot, baseURL string) bool {
+	current, err := CurrentVersion(installRoot)
+	if err != nil {
+		return false
+	}
+	releases, err := FetchReleases(baseURL)
+	if err != nil {
+		return false
+	}
+	_, file, err := LatestArchive(releases, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return false
+	}
+	return current == file.Version
 }
 
 func runRollback(args []string) error {
