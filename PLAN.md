@@ -2,7 +2,7 @@
 
 goup のロードマップとタスク進捗を記録する。完了タスクは削除せず `[x]` でマークして履歴として残す。
 
-## 現状の把握 (v0.2.0 リリース済み)
+## 現状の把握 (v0.3.0 リリース済み)
 
 - 2026-07-03: **v0.1.0 リリース済み** ([release](https://github.com/kwrkb/goup/releases/tag/v0.1.0))
   - サブコマンド: `check` / `update` / `rollback` / `help`
@@ -11,6 +11,12 @@ goup のロードマップとタスク進捗を記録する。完了タスクは
   - `-ldflags "-X main.version=..."` でタグ埋め込み。`go install` 経由だと `dev` になる（設計通り）
   - 実機での自己適用テスト完了（1.26.3 → 1.25.11 → 1.26.4 → rollback）
   - 判明した UX 課題: sudo secure_path で `~/go/bin/goup` が見えず `sudo $(which goup) update` が必要 → v0.3.0 で対応
+- 2026-07-04: **v0.3.0 リリース済み** ([release](https://github.com/kwrkb/goup/releases/tag/v0.3.0))
+  - 対話 TTY での自動 sudo 昇格 (`syscall.Exec` + `os.Executable()`)。`--no-sudo` フラグ追加
+  - TTY 判定はハイブリッド (`/dev/tty` open AND stdin ModeCharDevice) で CI/cron/pipe/redirect を fast-fail
+  - `goup update` no-op 時は昇格スキップ (PR #3 codex レビュー対応、v0.2.0 挙動と互換)
+  - `--help` を 7 原則で再設計。`goup help <cmd>` / `goup <cmd> --help` で per-command help 提供
+  - Linux amd64 / macOS arm64 の prebuilt binary を GitHub Release に添付
 
 ## v0.2.0: 指定バージョンインストール + list（完了）
 
