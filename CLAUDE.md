@@ -2,8 +2,6 @@
 
 Go 言語本体（toolchain）を更新する CLI。`/usr/local/go` に展開された公式 tarball を安全に入れ替える。
 
-既存の `gup`（github.com/nao1215/gup、`go install` バイナリの一括更新ツール）とは無関係の別ツール。
-
 ## 設計方針
 
 - **stdlib-only**: 外部依存パッケージを追加しない。`net/http`, `encoding/json`, `crypto/sha256`, `archive/tar`, `compress/gzip`, `os`, `os/exec`, `flag`, `testing`, `net/http/httptest` のみ使用
