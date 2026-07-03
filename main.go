@@ -24,32 +24,61 @@ func main() {
 	}
 
 	if len(os.Args) < 2 {
-		usage()
+		fmt.Fprint(os.Stderr, topHelp)
 		os.Exit(1)
 	}
 
+	cmd, rest := os.Args[1], os.Args[2:]
+
+	// Route the top-level help / version aliases first so they never fall
+	// through into a subcommand dispatch that would try to parse them as
+	// arguments.
+	switch cmd {
+	case "help", "-h", "--help":
+		if len(rest) > 0 {
+			if printHelpFor(os.Stdout, rest[0]) {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "goup: unknown command %q\n\n", rest[0])
+			fmt.Fprint(os.Stderr, topHelp)
+			os.Exit(1)
+		}
+		fmt.Print(topHelp)
+		return
+	case "-v", "--version":
+		fmt.Printf("goup %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		return
+	}
+
+	// Intercept per-subcommand --help / -h before dispatching to the
+	// real parser. Without this, the install loop-parser surfaces
+	// '--help' as 'flag: help requested' (an error), and the other
+	// commands print Go's default 'Usage of <name>:' stub instead of
+	// their real help text.
+	if _, known := commandHelp[cmd]; known && hasHelpFlag(rest) {
+		printHelpFor(os.Stdout, cmd)
+		return
+	}
+
 	var err error
-	switch os.Args[1] {
+	switch cmd {
 	case "check":
-		flag.NewFlagSet("check", flag.ExitOnError).Parse(os.Args[2:])
+		flag.NewFlagSet("check", flag.ExitOnError).Parse(rest)
 		err = runCheck()
 	case "update":
-		err = runUpdate(os.Args[2:])
+		err = runUpdate(rest)
 	case "install":
-		err = runInstall(os.Args[2:])
+		err = runInstall(rest)
 	case "rollback":
-		err = runRollback(os.Args[2:])
+		err = runRollback(rest)
 	case "list":
-		err = runList(os.Args[2:])
-	case "help", "-h", "--help":
-		usage()
-		return
-	case "version", "-v", "--version":
+		err = runList(rest)
+	case "version":
 		fmt.Printf("goup %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 		return
 	default:
-		fmt.Fprintf(os.Stderr, "goup: unknown command %q\n\n", os.Args[1])
-		usage()
+		fmt.Fprintf(os.Stderr, "goup: unknown command %q\n\n", cmd)
+		fmt.Fprint(os.Stderr, topHelp)
 		os.Exit(1)
 	}
 
@@ -57,24 +86,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "goup: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func usage() {
-	fmt.Fprintln(os.Stderr, `Usage: goup <command>
-
-Commands:
-  check      Show current and latest stable Go versions (no side effects)
-  update     Download, verify, and install the latest stable Go toolchain
-  install    Install a specific Go version, e.g. goup install 1.26.3
-  rollback   Restore the previous Go toolchain from the last backup
-  list       List available Go releases (use --all to include beta/rc)
-  version    Print goup version and build platform
-  help       Show this message
-
-Write commands (update, install, rollback) need root on /usr/local.
-On an interactive terminal goup re-execs itself via sudo automatically.
-Pass --no-sudo to opt out (CI, scripts) and get the previous fast-fail
-behaviour instead.`)
 }
 
 func runCheck() error {

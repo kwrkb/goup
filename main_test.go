@@ -145,6 +145,51 @@ func TestParseInstallArgs(t *testing.T) {
 	}
 }
 
+func TestHasHelpFlag(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"empty", nil, false},
+		{"only version arg", []string{"1.26.3"}, false},
+		{"double dash", []string{"--help"}, true},
+		{"single dash long", []string{"-help"}, true},
+		{"short", []string{"-h"}, true},
+		{"help after positional", []string{"1.26.3", "--help"}, true},
+		{"help mixed with flags", []string{"--pre", "1.27rc1", "-h"}, true},
+		// A literal 'help' subword must NOT trigger — otherwise
+		// `goup install help` (a nonsense version) would silently
+		// print help instead of erroring.
+		{"bare help word", []string{"help"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := hasHelpFlag(c.args); got != c.want {
+				t.Fatalf("hasHelpFlag(%v) = %v, want %v", c.args, got, c.want)
+			}
+		})
+	}
+}
+
+func TestPrintHelpFor_KnownAndUnknown(t *testing.T) {
+	var buf bytes.Buffer
+	if ok := printHelpFor(&buf, "install"); !ok {
+		t.Fatal("printHelpFor(install) returned false")
+	}
+	if !strings.Contains(buf.String(), "<version>") {
+		t.Errorf("install help missing <version> in signature:\n%s", buf.String())
+	}
+
+	buf.Reset()
+	if ok := printHelpFor(&buf, "totally-bogus"); ok {
+		t.Fatal("printHelpFor(unknown) should return false")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for unknown command, got:\n%s", buf.String())
+	}
+}
+
 func TestParseWriteFlags(t *testing.T) {
 	cases := []struct {
 		name    string
