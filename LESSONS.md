@@ -2,6 +2,39 @@
 
 goup 開発で得た教訓を蓄積する。同じ落とし穴を二度踏まないためのチェックリスト。
 
+## v0.3.0 リリース後: --help 再設計 & PR レビュー対応 (2026-07-04)
+
+### 標準 `flag` パッケージの `Usage of <name>:` は UX の罠
+
+- `flag.NewFlagSet("check", flag.ExitOnError).Parse(os.Args[2:])` と書くだけだと、`goup check --help` は `Usage of check:` の 1 行だけ返す（フラグ定義が無いため body が空）。「フラグが無いから help は自動で薄くて OK」は誤り—**ユーザーは "何をするコマンドか" を最初にここに探しに来る**。空の Usage は「詳細を教えないコマンド」に見える。
+- `ContinueOnError` + loop-parse を組み合わせた `install` では、`--help` が `flag.ErrHelp` として parseInstallArgs から返り、`main()` で `goup: flag: help requested` の**エラー扱い**で exit 1。help を求めたユーザーがエラーメッセージを受け取る最悪の UX。
+- **ルール**: 各サブコマンドの help を flag パッケージ任せにしない。help テキストは flag 定義とは別のソース（定数マップ）に置き、dispatch 前に `--help`/`-h`/`-help` を intercept する。flag.ErrHelp を各 parser で握るのは対症療法（parser が増える度に必要）で、dispatch 層で 1 回書く方が長期的に安い。
+
+### help の 7 原則は「エージェント最適化と人間 UX が両立する稀なケース」
+
+- 「自己定義 1 行」「read-only vs write のカテゴリ分け」「シグネチャ → 説明 → Arguments → Options → Example の固定構造」「曖昧引数への `(e.g., ...)` 」— これらを守ると、Claude が help だけを読んで正しくコマンドを組み立てられる（`goup help install` → `goup install 1.25.11` 即答）。同時に人間もスキャン速度が上がる。トレードオフではない。
+- 特に効くのは **原則 5（階層化）**: トップ help は概要のみ、詳細は `goup help <cmd>` に押し出す。エージェントのコンテキスト節約に直結し、人間の cognitive load も下がる。
+- **ルール**: 新規サブコマンドを追加するときは help を後付けの雑務にせず、固定構造テンプレートに沿って書く。README を書く前に help を書く。
+
+### CLI-layer elevation policy は「高頻度 no-op」に例外を切る
+
+- v0.3.0 初版は「書き込み系コマンドは無条件に CLI 層で maybeElevate → 昇格 → 本体呼び出し」の統一設計にした。テスト容易性・実装単純化のメリット重視で、advisor もこれを支持した。
+- しかし PR #3 レビューで codex が指摘: `goup update` の「もう最新版」ケースは**高頻度**（毎日 update する CI/cron 運用など）で発生し、そこで毎回 sudo プロンプトが出る/`--no-sudo` で fast-fail するのは v0.2.0 からの明確な UX 回帰。install/rollback の同種 no-op ケースとは頻度が桁違い。
+- 対処: `runUpdate` の頭にだけ `isAlreadyLatest(installRoot, baseURL)` の read-only pre-flight peek を追加。read エラーは fall-through で本体に丸投げ。install/rollback は据え置き（低頻度）。
+- **ルール**: 「実装対称性」と「実運用頻度」が衝突したら、頻度優先で例外を認める。低頻度の同種ケースまで揃えたくなる誘惑があるが、YAGNI で先送りする方が総合的に安い。ただし判断は必ず `implementation-notes.md` に書き残す—「対称でない」ことが後から見て事故に見えないように。
+
+### AI レビュー bot の指摘は無批判に採用せず、コードで実証する
+
+- gemini-code-assist が `elevate.go` に「`syscall.Exec` は Windows で未定義なので compile fail する」HIGH priority コメントを付けた。もっともらしく、CLAUDE.md の「Windows non-support」方針とも噛み合う。ここで build tag を追加する誘惑がある。
+- 実際に `GOOS=windows GOARCH=amd64 go build ./...` を実行 → exit 0 で PE32+ バイナリが生成される。Go の Windows stdlib は `syscall.Exec` シンボルを（runtime error を返す stub として）export しており、compile-time では解決できてしまう。bot の前提が誤り。
+- 同時に、bot は最初のコミットしか読んでおらず、後続コミットで解決済みの問題（`flag.ErrHelp` の `--help` エラー化）を 3 件重複指摘してきた。時間軸を bot は理解しない。
+- **ルール**: AI レビュー bot の指摘は「一次調査の情報源」であって「採用すべき指示」ではない。特に (a) 「〜は動かない」系の断定は必ず `go build` / 実行して empirical に検証し、(b) 「レビュー対象のコミット SHA」を確認して自分の直近のコミットで既に解決済みでないか照合する。scoping error（古いコミットへの指摘）は非常に多い。
+
+### PR コメント対応は "何を採用しなかったか" とその根拠を明記する
+
+- resolve-pr-comments で 3 種の指摘（gemini Windows / gemini ErrHelp x3 / codex update no-op）のうち 1 件だけ採用、2 件スキップした。コミットメッセージの本文で **スキップした指摘とその理由**（empirical に false / 後続コミットで既に解決）を明示的に列挙した。
+- **ルール**: PR コメント対応コミットで「対応した指摘の一覧」と同じ濃度で「スキップした指摘の一覧＋根拠」を書く。後からログを読むレビュアー・自分・別 AI が「なぜ 3 件中 1 件しか触ってないのか」を追跡できる形にする。fold や無視ではなく explicit dismissal。
+
 ## v0.3.0: 対話 TTY 自動 sudo 昇格 (2026-07-04)
 
 ### TTY 判定を「stdin の ModeCharDevice」だけで済ませると `/dev/null` に負ける
