@@ -36,3 +36,32 @@ goup 開発で得た教訓を蓄積する。同じ落とし穴を二度踏まな
 ### エラーメッセージの hint はサブコマンド名を hard-code しない
 - `wrapPermissionError` の hint が `rerun with sudo, e.g. `sudo goup update`` に決め打ちで、`goup rollback` の失敗時にも同じ hint が出て不正確だった。
 - **ルール**: 共通エラーラッパーは呼び出し側のサブコマンド文脈を知らないので、hint はサブコマンド名を含めず汎用形（`rerun with sudo`）にする。特定のコマンド例が本当に有益な場面では呼び出し側で文脈込みで組み立てる。
+
+## v0.2.0: install / list / version 実装 (2026-07-03)
+
+### Go 標準 `flag` パッケージは flag と positional を interleave できない
+- `install 1.27rc1 --pre`（自然な CLI 順序）で `--pre` が positional 扱いされ `NArg()==2` で失敗した。`flag.Parse` は最初の非フラグトークンで停止する仕様（`go doc flag` に明記）。
+- **ルール**: 「flag と 1 個の positional を任意順で受ける」サブコマンドは、以下の loop-parse パターンで書く。将来のサブコマンド追加時にコピペで使える定石として覚えておく。
+  ```go
+  var version string
+  for len(args) > 0 {
+      if err := fs.Parse(args); err != nil { return err }
+      if fs.NArg() == 0 { break }
+      if version != "" { return fmt.Errorf("only one positional allowed") }
+      version = fs.Arg(0)
+      args = fs.Args()[1:]
+  }
+  ```
+- 併せて `flag.ContinueOnError` + `fs.SetOutput(io.Discard)` を使う。`ExitOnError` だと loop-parse が回せない上、`main()` 側の "goup: %v" プレフィックス出力と二重印字になる。
+
+### ユーザーからの識別子入力は必ず case-normalize する
+- `NormalizeVersion("Go1.26.3")` が `"goGo1.26.3"` を返して release list とマッチしなかった。go.dev API は全て lowercase なのに、ユーザー入力の大文字混在を想定していなかった。
+- **ルール**: 外部 API との文字列マッチに使うユーザー入力は、`strings.ToLower` + `strings.TrimSpace` を必ず前段で通す。表記揺れは「拾えるところで全部拾う」のが CLI 設計の基本姿勢。
+
+### UI 装飾（区切り線/省略記号）は「後続コンテンツが確定してから」出力する
+- `goup list` の window 外 fallback で、`  ...` を先に印字してから releases を検索し、見つからないと dangling `...` だけ残るバグがあった。dev build や API から drop された古いバージョンで踏む。
+- **ルール**: 装飾行（`...` / 罫線 / セパレータ）は、その直後に必ず content 行が続くことを確認した後で emit する。「印字→検索」ではなく「検索→（見つかれば）印字＋content」の順で書く。
+
+### テスト fake データはプロダクションデータの命名規則に従わせる
+- Install テストで `"goSTABLE"` / `"goPRErc1"` の mixed-case fake version を使っていたら、後で追加した `NormalizeVersion` の lowercase 化で軒並みマッチしなくなった。fake は「架空だが production data のフォーマット規約を守る」姿勢が必要。
+- **ルール**: fake データを作る際は「本物と区別しやすい語彙」（`goOLD` / `goSTABLE`）を選びつつ、命名規則（この場合は全 lowercase）は本物と揃える。「区別のためわざと違う形にする」誘惑に負けない。
