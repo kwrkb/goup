@@ -186,6 +186,7 @@ func TestBackup_SingleGeneration(t *testing.T) {
 func TestWrapPermissionError_SeesWrappedError(t *testing.T) {
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
 
 	// Removing write permission on the install root itself makes renaming
 	// "<root>/go" fail with EACCES, without needing actual root privileges.
@@ -212,6 +213,7 @@ func TestRollback_NoBackup(t *testing.T) {
 func TestRollback_RestoresBackup(t *testing.T) {
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
 
 	if _, err := Backup(root); err != nil {
 		t.Fatalf("Backup: %v", err)
@@ -274,6 +276,7 @@ func newReleaseServer(t *testing.T, version, filename string, archiveBody []byte
 func TestUpdate_Success(t *testing.T) {
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
 
 	archive := buildTarGz(t, []tarEntry{
 		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goTEST-new linux/amd64", 0)},
@@ -301,6 +304,7 @@ func TestUpdate_Success(t *testing.T) {
 func TestUpdate_AutoRollbackOnLaunchFailure(t *testing.T) {
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
 
 	brokenArchive := buildTarGz(t, []tarEntry{
 		{Name: "go/bin/go", Mode: 0o755, Body: goScript("broken", 1)},
@@ -333,6 +337,7 @@ func TestUpdate_AutoRollbackOnLaunchFailure(t *testing.T) {
 func TestUpdate_AutoRollbackOnExtractFailure(t *testing.T) {
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
 
 	// A valid entry followed by a path-traversal entry: Extract writes go/bin/go
 	// before hitting the rejected entry, so this also proves the rollback undoes
@@ -366,9 +371,67 @@ func TestUpdate_AutoRollbackOnExtractFailure(t *testing.T) {
 	}
 }
 
+func TestUpdate_ReadOnlyRootFailsBeforeDownload(t *testing.T) {
+	root := t.TempDir()
+	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
+
+	archive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goTEST-new linux/amd64", 0)},
+	})
+
+	sum := sha256Hex(archive)
+	var archiveHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("mode") != "json" {
+			http.NotFound(w, r)
+			return
+		}
+		releases := []Release{{
+			Version: "goTEST-new",
+			Stable:  true,
+			Files: []ReleaseFile{{
+				Filename: "go-new.tar.gz",
+				OS:       runtime.GOOS,
+				Arch:     runtime.GOARCH,
+				Version:  "goTEST-new",
+				Sha256:   sum,
+				Kind:     "archive",
+			}},
+		}}
+		json.NewEncoder(w).Encode(releases)
+	})
+	mux.HandleFunc("/go-new.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		archiveHits++
+		w.Write(archive)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// Remove write permission so Backup/Extract would eventually fail.
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer os.Chmod(root, 0o755)
+
+	err := Update(root, srv.URL)
+	if err == nil {
+		t.Fatal("expected Update to fail on read-only install root")
+	}
+	if !strings.Contains(err.Error(), "sudo") {
+		t.Fatalf("expected sudo hint in error, got: %v", err)
+	}
+	if archiveHits != 0 {
+		t.Fatalf("expected fast-fail before downloading archive, got %d hits", archiveHits)
+	}
+}
+
 func TestUpdate_Sha256MismatchAbortsBeforeExtract(t *testing.T) {
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
 
 	archive := buildTarGz(t, []tarEntry{
 		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goTEST-new linux/amd64", 0)},

@@ -27,9 +27,13 @@ Go 言語本体（toolchain）を更新する CLI。`/usr/local/go` に展開さ
 
 `installer.go` の中核関数は `installRoot`（デフォルト `/usr/local`）と `baseURL`（デフォルト `https://go.dev/dl`）を引数に取る。テストでは `httptest.Server` と `t.TempDir()` を渡すことで、実際の `/usr/local` に触れずに sha256 検証・自動ロールバック・世代管理の挙動を証明する。
 
-## go.mod toolchain directive との干渉に関する注意
+## CurrentVersion は VERSION ファイルを直読みする
 
-`go env GOVERSION` はカレントディレクトリの `go.mod` に `toolchain` 指定があると、`/usr/local/go` の実体とは別の解決済みバージョンを返すことがある。`CurrentVersion()` は `GOTOOLCHAIN=local` を環境変数に加えて実行し、常に `/usr/local/go` に実際にインストールされているバージョンを取得する。
+`CurrentVersion(installRoot)` は `<installRoot>/go/VERSION` の1行目を返す。以前は `go env GOVERSION` を叩いていたが、次の理由でファイル直読みに切り替えた:
+
+- **sudo での PATH 剥奪**: Ubuntu の secure_path は sudo 実行時に `$PATH` を `/usr/sbin:/usr/bin:/sbin:/bin` にリセットするため、`/usr/local/go/bin` にある `go` バイナリが解決できず `sudo goup update` が起動時に失敗していた
+- **go.mod toolchain directive との干渉**: カレントディレクトリの `go.mod` に `toolchain` 指定があると `go env GOVERSION` は自動 fetch された別バージョンを返すことがあった（VERSION ファイル読み取りではそもそも関係ない）
+- **副次効果**: `go` バイナリが壊れていても（rollback 直前など）installRoot のバージョンが読み取れる
 
 ## リリース前チェック
 
