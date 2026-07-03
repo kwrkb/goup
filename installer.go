@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,13 +22,18 @@ import (
 // fetches never hang forever on a stalled connection.
 var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
-// wrapPermissionError adds a hint to rerun with sudo when err is a
-// permission error, and passes other errors through unchanged.
+// wrapPermissionError adds a hint to rerun with sudo when err is, or wraps,
+// a permission error, and passes other errors through unchanged.
+//
+// errors.Is (not os.IsPermission) is required here: callers pass in an err
+// already wrapped by fmt.Errorf("...: %w", err), and os.IsPermission only
+// unwraps *PathError/*LinkError/*SyscallError directly, not arbitrary
+// Unwrap() chains, so it would never see the underlying permission error.
 func wrapPermissionError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if os.IsPermission(err) {
+	if errors.Is(err, os.ErrPermission) {
 		return fmt.Errorf("%w (hint: rerun with sudo, e.g. `sudo goup update`)", err)
 	}
 	return err

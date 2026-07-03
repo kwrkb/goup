@@ -1,5 +1,13 @@
 # Implementation notes
 
+## バグ修正: 権限エラー時に sudo ヒントが出ていなかった
+
+ユーザーから「sudoなしでどうなるか確認」と言われて再現しようとしたところ、`wrapPermissionError` が一度も発火していないことが判明した。原因: `os.IsPermission` は `*PathError`/`*LinkError`/`*SyscallError` を直接受け取った場合しか中身を見ない（`not all errors implementing Unwrap()` — Go標準ライブラリのコメントどおり）実装になっているが、各呼び出し箇所は `wrapPermissionError(fmt.Errorf("...: %w", err))` のように、先に `fmt.Errorf` でラップしてから渡していたため、`os.IsPermission` からは常に非該当の型に見えて `false` を返し続けていた。結果として「sudo で再実行してください」というヒントは実装上決して表示されない状態だった。
+
+修正: `os.IsPermission(err)` を `errors.Is(err, os.ErrPermission)` に置き換えた。`errors.Is` は `Unwrap()` チェーンを再帰的に辿るため、`fmt.Errorf("%w", ...)` で何重にラップされていても正しく検出できる。`t.Chmod(root, 0o555)` で書き込み不可のディレクトリを作り実際に `Backup()` を root権限なしで実行して再現・修正確認し、回帰防止として `TestWrapPermissionError_SeesWrappedError` を `installer_test.go` に追加した。
+
+このバグは既存の `installer_test.go` では検出できていなかった（`wrapPermissionError` 自体を直接テストしていなかったため）。今後、`fmt.Errorf` でラップしたエラーに対してエラー種別判定を行う際は `errors.Is`/`errors.As` を使い、`os.IsPermission` 等のレガシーな型アサーションベースの判定関数をラップ後のエラーに対して使わないよう注意する。
+
 ## テスト容易性のための installRoot/baseURL 引数化
 
 `installer.go` の各関数は `installRoot`（デフォルト `/usr/local`）と `Update`/`FetchReleases` の `baseURL`（デフォルト `https://go.dev/dl`）を引数として受け取る設計にした。理由: 実際の `/usr/local/go` を書き換えずに、sha256検証失敗時に展開へ進まないこと・起動確認失敗時に自動ロールバックすること・バックアップが最新1世代のみ残ることを `go test` で自動証明する唯一の方法だったため。`installer_test.go` は `httptest.Server` でダミーの go.dev/dl JSON とダミー tar.gz を返し、`t.TempDir()` を install root として渡して検証する。

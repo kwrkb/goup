@@ -177,6 +177,32 @@ func TestBackup_SingleGeneration(t *testing.T) {
 	}
 }
 
+// TestWrapPermissionError_SeesWrappedError guards against a regression where
+// os.IsPermission was used instead of errors.Is: os.IsPermission only
+// unwraps *PathError/*LinkError/*SyscallError directly, so it silently
+// failed to recognize a permission error once it had already been wrapped
+// by fmt.Errorf("...: %w", err) at the call site, and the sudo hint never
+// appeared.
+func TestWrapPermissionError_SeesWrappedError(t *testing.T) {
+	root := t.TempDir()
+	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+
+	// Removing write permission on the install root itself makes renaming
+	// "<root>/go" fail with EACCES, without needing actual root privileges.
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer os.Chmod(root, 0o755)
+
+	_, err := Backup(root)
+	if err == nil {
+		t.Fatal("expected a permission error")
+	}
+	if !strings.Contains(err.Error(), "sudo") {
+		t.Fatalf("expected sudo hint in wrapped permission error, got: %v", err)
+	}
+}
+
 func TestRollback_NoBackup(t *testing.T) {
 	if err := Rollback(t.TempDir()); err == nil {
 		t.Fatal("expected error when no backup exists")
