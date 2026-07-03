@@ -79,6 +79,34 @@ func LatestArchive(releases []Release, goos, goarch string) (Release, ReleaseFil
 	return Release{}, ReleaseFile{}, fmt.Errorf("no stable archive found for %s/%s", goos, goarch)
 }
 
+// FindArchive returns the release and its archive matching an exact
+// wantVersion string (e.g. "go1.26.3") for goos/goarch. Used by
+// `goup install <version>`.
+func FindArchive(releases []Release, wantVersion, goos, goarch string) (Release, ReleaseFile, error) {
+	for _, r := range releases {
+		if r.Version != wantVersion {
+			continue
+		}
+		for _, f := range r.Files {
+			if f.Kind == "archive" && f.OS == goos && f.Arch == goarch {
+				return r, f, nil
+			}
+		}
+		return Release{}, ReleaseFile{}, fmt.Errorf("release %s has no archive for %s/%s", wantVersion, goos, goarch)
+	}
+	return Release{}, ReleaseFile{}, fmt.Errorf("release %s not found (see `goup list --all` for available versions)", wantVersion)
+}
+
+// NormalizeVersion accepts "1.26.3" or "go1.26.3" (and pre-release variants
+// like "1.27rc1") and returns the canonical "go..."-prefixed form.
+func NormalizeVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if strings.HasPrefix(v, "go") {
+		return v
+	}
+	return "go" + v
+}
+
 // CurrentVersion returns the version of the Go toolchain installed at
 // installRoot, e.g. "go1.23.4".
 //

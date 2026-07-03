@@ -284,14 +284,70 @@ func Update(installRoot, baseURL string) error {
 		return nil
 	}
 
+	backupPath, err := installArchive(installRoot, baseURL, file, current)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Updated: %s -> %s\n", current, file.Version)
+	fmt.Printf("Backup kept at %s (use `goup rollback` to restore)\n", backupPath)
+	return nil
+}
+
+// Install pins a specific Go version at installRoot, e.g. `goup install 1.26.3`.
+// It reuses the same download/backup/extract/verify path as Update, so a failed
+// install auto-rolls back to the previous toolchain. Pre-release versions are
+// refused unless allowPreRelease is true, to match the default "stable only"
+// stance of `goup update`.
+func Install(installRoot, baseURL, wantVersion string, allowPreRelease bool) error {
+	want := NormalizeVersion(wantVersion)
+
+	releases, err := FetchAllReleases(baseURL)
+	if err != nil {
+		return err
+	}
+
+	release, file, err := FindArchive(releases, want, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+
+	if !release.Stable && !allowPreRelease {
+		return fmt.Errorf("%s is a pre-release; pass --pre to install it", want)
+	}
+
+	current, err := CurrentVersion(installRoot)
+	if err != nil {
+		return err
+	}
+
+	if current == want {
+		fmt.Printf("Already at %s\n", current)
+		return nil
+	}
+
+	backupPath, err := installArchive(installRoot, baseURL, file, current)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Installed: %s (was %s)\n", file.Version, current)
+	fmt.Printf("Backup kept at %s (use `goup rollback` to restore)\n", backupPath)
+	return nil
+}
+
+// installArchive is the shared download → verify → backup → extract → launch
+// → auto-rollback sequence used by both Update and Install. It returns the
+// path to the retained backup on success.
+func installArchive(installRoot, baseURL string, file ReleaseFile, current string) (string, error) {
 	// Probe write access before spending bandwidth on the download.
 	if err := checkWritable(installRoot); err != nil {
-		return err
+		return "", err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "goup-*")
 	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
+		return "", fmt.Errorf("creating temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -300,35 +356,32 @@ func Update(installRoot, baseURL string) error {
 
 	fmt.Printf("Downloading %s ...\n", downloadURL)
 	if err := Download(downloadURL, file.Sha256, tarPath); err != nil {
-		return err
+		return "", err
 	}
 	fmt.Println("sha256 verified")
 
 	fmt.Printf("Backing up %s ...\n", filepath.Join(installRoot, "go"))
 	backupPath, err := Backup(installRoot)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	fmt.Printf("Extracting to %s ...\n", installRoot)
 	if err := Extract(tarPath, installRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "extraction failed, rolling back: %v\n", err)
 		if rerr := restoreFrom(installRoot, backupPath); rerr != nil {
-			return fmt.Errorf("extraction failed AND rollback failed: %v (rollback error: %w)", err, rerr)
+			return "", fmt.Errorf("extraction failed AND rollback failed: %v (rollback error: %w)", err, rerr)
 		}
-		return fmt.Errorf("update failed during extraction, rolled back to %s: %w", current, err)
+		return "", fmt.Errorf("install failed during extraction, rolled back to %s: %w", current, err)
 	}
 
 	if err := VerifyLaunch(installRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "launch check failed, rolling back: %v\n", err)
 		if rerr := restoreFrom(installRoot, backupPath); rerr != nil {
-			return fmt.Errorf("launch check failed AND rollback failed: %v (rollback error: %w)", err, rerr)
+			return "", fmt.Errorf("launch check failed AND rollback failed: %v (rollback error: %w)", err, rerr)
 		}
-		return fmt.Errorf("update failed launch check, rolled back to %s: %w", current, err)
+		return "", fmt.Errorf("install failed launch check, rolled back to %s: %w", current, err)
 	}
 
-	fmt.Printf("Updated: %s -> %s\n", current, file.Version)
-	fmt.Printf("Backup kept at %s (use `goup rollback` to restore)\n", backupPath)
-
-	return nil
+	return backupPath, nil
 }

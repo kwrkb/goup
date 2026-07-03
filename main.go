@@ -36,6 +36,8 @@ func main() {
 	case "update":
 		flag.NewFlagSet("update", flag.ExitOnError).Parse(os.Args[2:])
 		err = Update(defaultInstallRoot, defaultBaseURL)
+	case "install":
+		err = runInstall(os.Args[2:])
 	case "rollback":
 		flag.NewFlagSet("rollback", flag.ExitOnError).Parse(os.Args[2:])
 		err = Rollback(defaultInstallRoot)
@@ -65,6 +67,7 @@ func usage() {
 Commands:
   check      Show current and latest stable Go versions (no side effects)
   update     Download, verify, and install the latest stable Go toolchain (requires sudo)
+  install    Install a specific Go version, e.g. goup install 1.26.3 (requires sudo)
   rollback   Restore the previous Go toolchain from the last backup (requires sudo)
   list       List available Go releases (use --all to include beta/rc)
   version    Print goup version and build platform
@@ -97,6 +100,17 @@ func runCheck() error {
 	}
 
 	return nil
+}
+
+func runInstall(args []string) error {
+	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	pre := fs.Bool("pre", false, "allow installing a beta/rc pre-release")
+	fs.Parse(args)
+
+	if fs.NArg() != 1 {
+		return fmt.Errorf("install requires exactly one version argument (e.g. `goup install 1.26.3`)")
+	}
+	return Install(defaultInstallRoot, defaultBaseURL, fs.Arg(0), *pre)
 }
 
 func runList(args []string) error {
