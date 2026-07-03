@@ -67,3 +67,52 @@ sudo なしで `goup update` を叩くと、旧実装はダウンロード（〜
 
 - **Rollback 成功時に何も出力しない**: 静かに成功する挙動はユーザーが「本当に動いたか」不安になる。`Update` は "Updated: X -> Y" と出るのに対称性が無い。VerifyLaunch 成功後に `CurrentVersion(installRoot)` を再度呼び、`Rolled back to <version> (from <backup basename>)` を出力するようにした。
 - **`wrapPermissionError` の sudo hint が `sudo goup update` に決め打ち**: `goup rollback` を sudo なしで叩いても "hint: rerun with sudo, e.g. `sudo goup update`" と出て、コマンド名が不正確。`wrapPermissionError` はサブコマンド文脈を知らないので、hint を `(hint: rerun with sudo)` に短縮して汎用化した（既存テストは "sudo" 部分文字列しか見ていないので影響なし）。
+
+## v0.3.0: 対話 TTY での自動 sudo 昇格
+
+### 昇格判定は install/rollback は前段一択、update は pre-flight peek で例外扱い
+
+`install <version>` と `rollback` の書き込み権限判定は「バージョン検証・backup 存在確認より前」に置いた。トレードオフは advisor 相談で明示的に確認済み:
+
+- **利点**: 判定ロジックを CLI 層の 1 箇所に集約でき、`Install()` / `Rollback()` の内部フローに sudo 昇格を持ち込まずに済む。CI や非 TTY 環境では go.dev への API コール前に fast-fail するので帯域を無駄にしない。
+- **欠点**: `goup install <typo>` / `goup install <現行バージョン>`（no-op）/ `goup rollback` (backup 無し) でも sudo プロンプトが先に出る。今までは検証エラー / no-op で sudo 不要だった。
+- **判断**: いずれも低頻度ケースなので受容。Ctrl-C で抜けるコストは実害無し。
+
+**update は例外**: PR #3 レビューで codex が指摘した通り、`goup update` の「もう最新版」ケースは**高頻度**（CI で毎日 update を叩く運用、追従目的の日次実行など）で発生する。ここで毎回 sudo プロンプトが出る/`--no-sudo` で fast-fail するのは v0.2.0 からの明確な UX 回帰。
+
+対処: `runUpdate` の頭に `isAlreadyLatest(installRoot, baseURL)` の pre-flight peek を追加し、read-only な範囲で current == latest を判定してから `maybeElevate` を呼ぶ。既に最新なら "Already up to date" を出して exit 0、そうでなければ従来通り昇格 → `Update()` に進む。
+
+- **エラー時は fall-through**: `isAlreadyLatest` は網羅的エラーハンドリングを持たず、`FetchReleases` の network error 等を検知すると単に false を返す。「わからないから通常経路に流す」設計で、Update 本体が本物のエラーを surface する。
+- **重複 fetch のコスト**: 書き込みが必要なパスでは pre-flight で 1 回、Update 内で 1 回、sudo 後の再入で 1 回の計 3 回 `FetchReleases` が走る。ペイロード数 KB なので実害無し、Install/Rollback と実装対称性を優先しなかった理由でもある。
+- **install に同じ扱いをしない理由**: `goup install <same-version>` は idempotent script 用途で発生しうるが update ほど高頻度ではなく、実際に困ったら install にも同じ pre-flight を追加する（`Install()` の signature を弄らずに済むため YAGNI で先送り）。
+
+### `syscall.Exec` + `os.Executable()` で PATH 剥奪を回避
+
+v0.2.0 の実機テストで判明した「`sudo goup update` が `sudo: goup: command not found` で落ちる」（Ubuntu の `secure_path` が `~/go/bin` を落とす）問題への対処。
+
+- **`syscall.Exec` を選んだ理由**: `exec.Command` だと goup が親プロセスとして残り、signal 転送・exit code 中継・stdio 中継を全部書く必要がある。`syscall.Exec` はプロセス置換で、そのあたりを全部 sudo に委譲できる。
+- **`os.Executable()` を渡す理由**: sudo が secure_path を強制すると `argv[0]="goup"` は再度解決不能になる。絶対パスを渡せば sudo は PATH 解決を挟まないので確実。
+- **無限昇格ループの防止**: `elevationDecision` は `uid == 0` を `canWrite` より前で判定する。sudo 経由で再実行されたプロセスは uid=0 なので必ず `decisionRun` を選び、write 判定に関わらず本体処理へ進む。
+
+### TTY 判定はハイブリッド（`/dev/tty` open + stdin ModeCharDevice）
+
+PLAN.md は当初 `os.Stdin.Stat().Mode()&os.ModeCharDevice` 単独で TTY 判定するとしていたが、実機 smoke test で `goup update < /dev/null` が「昇格して sudo に "A terminal is required" を吐かせる」挙動を確認し、方針を見直した。
+
+**候補 A: stdin ModeCharDevice 単独**（PLAN 当初案）: `/dev/null` が character device なので誤陽性。stdin redirect の判定に stdin だけを見るのは根本的に足りない。却下。
+
+**候補 B: `/dev/tty` open 単独**: sudo の実挙動と一致し堅牢だが、CLAUDE.md 設計原則の「非対話環境（CI / cron / **パイプ / redirect**）→ fast-fail」のうちパイプと regular-file redirect が抜け落ちる（controlling terminal がある対話シェルから `cat foo | goup update` や `goup update < script.sh` を叩いた場合、sudo prompt が出てしまう）。CLAUDE.md の意図から外れる。
+
+**採用: 両方を AND する** — (a) `/dev/tty` open 可能、かつ (b) stdin が character device。
+
+- **カバー範囲**: CI / cron / detached script → (a) 落ち。pipe / regular-file redirect → (b) 落ち。対話 TTY → 両方満たして昇格へ流れる。CLAUDE.md 設計原則と 1 対 1 で一致。
+- **既知の穴**: `goup update < /dev/null` は /dev/null 自体が character device なので (b) をすり抜けて昇格へ。stdlib-only 制約下では isatty ioctl 相当（`golang.org/x/term.IsTerminal`）を書かないと閉じられない。受容トレードオフとして README / CLAUDE.md に明記し、スクリプトは `--no-sudo` を明示することを推奨する。
+- **`--no-sudo` の位置付け**: TTY 判定は best-effort。スクリプト・CI で確実に非対話を保証したいなら `--no-sudo` を渡すのが決定的な switch。README でもこちらをリードで案内する。
+- **依存追加なし**（stdlib のみ）。
+
+**テスト方針**: `isTTY()` 本体は環境依存なので runtime テストせず、`elevationDecision(uid, canWrite, tty, noSudo)` の純関数を 11 パターン table-driven で網羅。実際の TTY 判定・sudo 再実行は実機 smoke test にリレー。
+
+### `--no-sudo` フラグの居場所
+
+`update` / `rollback` は元々フラグを取らなかったので `parseWriteFlags` を新設。`install` は既存の `parseInstallArgs` を 4 戻り値（version, pre, noSudo, err）に拡張して同居させた。
+
+- **`update` / `rollback` は positional を拒否**: フラグ以外の引数が来たら error にする。従来は `flag.NewFlagSet` の `ExitOnError` で単に無視されていたが、`--no-sudo` を追加するタイミングで validate も厳格化した。

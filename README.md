@@ -22,19 +22,20 @@ goup check
 goup list
 goup list --all -n 20    # include beta/rc, show 20 rows
 
-# Requires write access to /usr/local, so run with sudo
-sudo goup update              # jump to the latest stable
-sudo goup install 1.25.11     # pin a specific version (also accepts go1.25.11)
-sudo goup install 1.27rc1 --pre    # opt into a pre-release
+# Writes to /usr/local. On an interactive terminal goup re-execs itself
+# via sudo automatically; no need to type `sudo` yourself.
+goup update              # jump to the latest stable
+goup install 1.25.11     # pin a specific version (also accepts go1.25.11)
+goup install 1.27rc1 --pre    # opt into a pre-release
 
-# Manually restore the previous version (also requires sudo)
-sudo goup rollback
+# Manually restore the previous version
+goup rollback
 
 # Show goup's own version, target platform, and the Go used to build it
 goup version
 ```
 
-Write commands (`update`, `install`, `rollback`) fail fast with a `permission denied` message before downloading anything if `/usr/local` isn't writable, so you never waste bandwidth on an unauthorized attempt. `goup` never elevates privileges itself.
+Write commands (`update`, `install`, `rollback`) detect missing write access to `/usr/local` before downloading anything. On an interactive terminal they re-invoke themselves through `sudo` (which prompts for your password directly). Without a controlling terminal (CI, cron, detached scripts) or when stdin is a pipe or a regular-file redirect, they fail fast with a `permission denied` message instead. **For scripts, always pass `--no-sudo`** — it is the guaranteed non-interactive switch and doesn't rely on stdin detection.
 
 ### `goup check`
 
@@ -59,7 +60,7 @@ Prints available Go releases newest first, marking the installed version with `*
 
 ### `goup install <version>`
 
-Pins a specific Go version, e.g. `sudo goup install 1.25.11`. Accepts either `1.25.11` or `go1.25.11` (case-insensitive). Uses the same download → verify → backup → extract → launch → auto-rollback sequence as `goup update`.
+Pins a specific Go version, e.g. `goup install 1.25.11`. Accepts either `1.25.11` or `go1.25.11` (case-insensitive). Uses the same download → verify → backup → extract → launch → auto-rollback sequence as `goup update`.
 
 Pre-releases (`1.27rc1`, etc.) are refused unless you pass `--pre`, matching the default stable-only stance of `goup update`. Passing a version that equals the current install is a no-op.
 
@@ -75,7 +76,7 @@ Prints the `goup` release tag, target OS/arch, and the Go version it was built w
 
 - OS: WSL2 (Ubuntu) or macOS (Apple Silicon). Windows is not supported and the command exits with a clear message instead of crashing
 - Go must already be installed at `/usr/local/go` via the official tarball layout
-- `update` and `rollback` require write access to `/usr/local` (sudo)
+- `update`, `install`, and `rollback` require write access to `/usr/local`. On an interactive terminal `goup` re-execs itself via `sudo`; in non-interactive contexts (or with `--no-sudo`) they fast-fail
 
 ## Out of scope
 
@@ -83,7 +84,6 @@ Prints the `goup` release tag, target OS/arch, and the Go version it was built w
 - Managing multiple Go versions side by side (no gvm/goenv-style version switching — use `mise` / `asdf` / `gvm` for that)
 - Reading or rewriting the `toolchain` directive in `go.mod` (`goup` only manages the `/usr/local/go` install itself; the current version is read from `/usr/local/go/VERSION`, which is unaffected by any nearby `go.mod`)
 - First-time installation to a machine with no existing `/usr/local/go` (follow the [official Go install instructions](https://go.dev/doc/install) once, then use `goup` from then on)
-- Automatic sudo elevation (it only prompts you to rerun with sudo)
 - Multi-generation backups (only the latest is retained; use `goup rollback` immediately after a bad update)
 
 ## Development

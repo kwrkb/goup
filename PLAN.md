@@ -74,35 +74,44 @@ CLAUDE.md の設計原則「自動 sudo 昇格をしない」を **TTY 対話時
 
 ### `runWithElevation` の設計
 
-- [ ] 書き込みコマンド（`update` / `install` / `rollback`）の CLI 層に共通ラッパーを追加。以下の順で判定:
+- [x] 書き込みコマンド（`update` / `install` / `rollback`）の CLI 層に共通ラッパーを追加。以下の順で判定:
   1. `os.Getuid() == 0`（既に root）→ そのまま実行
   2. `checkWritable(installRoot)` が nil → そのまま実行（ACL 等で権限あり）
   3. `--no-sudo` フラグ or 非 TTY（`os.Stdin.Stat().Mode()&os.ModeCharDevice == 0`）→ 従来通り fast-fail
   4. それ以外 → `syscall.Exec("sudo", os.Args...)` で自己再実行
-- [ ] TTY 判定は stdlib のみで実装（`os.Stat` の `ModeCharDevice` ビット参照）。`golang.org/x/term` は依存追加になるため使わない
-- [ ] `sudo` 実行は `exec.Command` ではなく `syscall.Exec` を選ぶ。プロセス置換なので子プロセス管理・signal 転送・exit code の受け渡しが自明になる
-- [ ] `PATH` 剥奪対策: `syscall.Exec("sudo", ["sudo", os.Args[0], os.Args[1:]...])` に自バイナリの絶対パスを渡す（`os.Executable()` で取得）。sudo 側の secure_path とは無関係にする
+  > `elevate.go` の `maybeElevate` / `elevationDecision` として実装
+- [x] TTY 判定は stdlib のみで実装
+  > `/dev/tty` open 可能 AND stdin が character device のハイブリッド。CI / cron / detached は前者で、pipe / regular-file redirect は後者で fast-fail。既知の穴 `< /dev/null` のみ受容。詳細 `implementation-notes.md`
+- [x] `sudo` 実行は `syscall.Exec` を選択。プロセス置換で signal / exit code / stdio を sudo に委譲
+- [x] `PATH` 剥奪対策: `os.Executable()` で得た絶対パスを argv に載せる
 
 ### `--no-sudo` フラグ
 
-- [ ] 全書き込みコマンド共通のフラグとして追加
-- [ ] 目的: スクリプト・CI で「明示的に昇格を試みない」動作を保証する。TTY 判定だけだと予期しない TTY 検知で暴発する可能性を潰す
-- [ ] 実装: `parseInstallArgs` 相当を `update` / `rollback` にも用意（現状フラグ無しなので新規）
+- [x] 全書き込みコマンド共通のフラグとして追加
+- [x] `parseWriteFlags` を新設して `update` / `rollback` に付与。`parseInstallArgs` は 4 戻り値化して `install` に付与
 
 ### テスト
 
-sudo 環境そのものは単体テストで再現不能なので、判定ロジックだけを分離してテストする:
-
-- [ ] `elevationDecision(uid int, canWrite bool, tty bool, noSudo bool) decision` を純関数として切り出す
-- [ ] 4 変数の table-driven テスト（8 パターン + α）で「昇格試行 / そのまま実行 / fast-fail」の 3 分岐を網羅
-- [ ] TTY 判定関数 (`isTTY`) は環境依存なので runtime テストは避け、実機 smoke test にリレー
-- [ ] 実機テスト: `goup update` を TTY で叩いて sudo プロンプトが出ることを確認、`goup update < /dev/null` で fast-fail に落ちることを確認
+- [x] `elevationDecision(uid, canWrite, tty, noSudo) decision` を純関数として切り出し
+- [x] 11 パターンの table-driven テスト (`elevate_test.go`) で run / elevate / fail 3 分岐を網羅
+- [x] `isTTY` の runtime テストは avoid、実機 smoke test にリレー
+- [x] 実機テスト (2026-07-04, WSL2 Ubuntu):
+  - 対話 TTY で `install 1.25.11` → 自動昇格 → sudo プロンプト → 1.26.4 → 1.25.11 成功
+  - `echo | update` (pipe) → fast-fail
+  - `update --no-sudo` → fast-fail
+  - `rollback` → 自動昇格 → 1.26.4 復元成功
 
 ### ドキュメント
 
-- [ ] `README.md` の Usage を書き換え。`sudo goup update` を `goup update` に変える（sudo は不要と説明）
-- [ ] 「非対話環境では従来通り」の注意書きを追加
-- [ ] CLAUDE.md の該当設計方針は既に更新済み
+- [x] `README.md` の Usage を書き換え（`sudo goup update` → `goup update`、非対話環境の挙動を説明）
+- [x] Requirements と Out of scope からも sudo 前提の記述を除去
+- [x] CLAUDE.md の該当設計方針は更新済み
+
+### 実装メモ
+
+- 昇格判定は install の場合でも `FetchAllReleases` より前で実行する（CLI 層に集約するため）。副作用: `goup install <typo>` / `install <current>` でも sudo プロンプトが先に出る。詳細は `implementation-notes.md` 参照
+- `usage()` の "requires sudo" 表記も更新（自動昇格することを明記）
+- `runCheck()` の hint も ``Run `sudo goup update` `` → ``Run `goup update` `` に変更
 
 ### スコープ外（意図的に含めない）
 
