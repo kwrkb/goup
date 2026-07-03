@@ -74,7 +74,7 @@ goup のロードマップとタスク進捗を記録する。完了タスクは
 
 ### 動機
 
-v0.2.0 リリース後の実機動作で `sudo goup update` が `sudo: goup: command not found` で落ちた（Ubuntu の secure_path が `~/go/bin` を PATH から剥奪するため）。ユーザーは `sudo $(which goup) update` と打つ羽目になる。`gup` 経由で go install した非 root ユーザー全員が踏む定石バグ。
+v0.2.0 リリース後の実機動作で `sudo goup update` が `sudo: goup: command not found` で落ちた（Ubuntu の secure_path が `~/go/bin` を PATH から剥奪するため）。ユーザーは `sudo $(which goup) update` と打つ羽目になる。`go install` で `~/go/bin` に入れた非 root ユーザー全員が踏む定石バグ。
 
 CLAUDE.md の設計原則「自動 sudo 昇格をしない」を **TTY 対話時のみ許可** に緩和し、`goup update` をそのまま叩けば sudo プロンプトが自動で出るようにする。
 
