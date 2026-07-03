@@ -2,6 +2,42 @@
 
 goup 開発で得た教訓を蓄積する。同じ落とし穴を二度踏まないためのチェックリスト。
 
+## v0.3.0: 対話 TTY 自動 sudo 昇格 (2026-07-04)
+
+### TTY 判定を「stdin の ModeCharDevice」だけで済ませると `/dev/null` に負ける
+- PLAN 当初案は `os.Stdin.Stat().Mode()&os.ModeCharDevice != 0` で「対話環境か」を判定していた。実装後の smoke test で `goup update < /dev/null` が sudo 昇格側に流れ、`sudo: A terminal is required to authenticate` を吐いた。
+- 原因: **`/dev/null` 自体が character device**。stdin redirect の判定に stdin の Mode を見るだけでは根本的に足りない。/dev/zero / /dev/random 等も同じ罠。
+- **ルール**: sudo prompt が「本当に出せるか」を知りたいなら、stdin ではなく `os.OpenFile("/dev/tty", O_RDONLY, 0)` の成否で判定する。sudo 自身も `/dev/tty` から password を読むので意味論が 1 対 1 で一致する。
+
+### CI と「stdin redirect」を両方 fast-fail にしたいならハイブリッド判定が必要
+- `/dev/tty` open 単独だと、対話シェルからパイプ（`| goup`）や regular-file redirect（`goup < file`）を叩いても controlling terminal は残っているので昇格側に流れる。CLAUDE.md の設計原則「CI / cron / パイプ / redirect は fast-fail」と乖離する。
+- 採用: **(a) `/dev/tty` open 可能 AND (b) stdin が character device** の両方成立でのみ対話扱い。(a) が CI/cron/detached を、(b) が pipe/regular-file redirect を担当。それぞれ別の失敗モードを別のプローブで検出する構造。
+- 既知の穴として `< /dev/null` だけは (b) をすり抜けるが、stdlib-only 制約下では isatty ioctl 相当（`golang.org/x/term.IsTerminal`）を書かないと閉じられない。トレードオフとして受容し、README / CLAUDE.md に明記する。
+- **ルール**: 「非対話」の中に複数の質的に異なる状況（controlling terminal 無し / stdio 系だけ非対話）が混ざる場合、それぞれ独立プローブで AND 判定する。1 個の指標で全部見ようとすると必ずどこかで穴が開く。
+
+### 「非対話の決定的な switch」は環境検知ではなくフラグにする
+- どんな精緻な TTY ヒューリスティックも edge case を残す（上記の `< /dev/null`）。スクリプト・CI で確実に非対話動作を保証したいユーザーには、環境検知に頼らせず `--no-sudo` を渡させる。
+- **ルール**: 自動判定 + 明示 opt-out フラグの 2 段構え。README では明示フラグをリードで案内する（"For scripts, always pass --no-sudo"）。ユーザーに「fast-fail されなかった場合にも打つ手」を渡す。
+
+### プロセス置換は `syscall.Exec` の一択（`exec.Command` は罠）
+- sudo で自己再実行する際、`exec.Command("sudo", ...).Run()` を選ぶと goup が親プロセスとして残り、signal 転送・exit code 中継・stdio 中継を全部書く必要が出る。特に Ctrl-C が sudo に届かない・exit code が変わる等、正しく書くと 30 行くらい増える。
+- `syscall.Exec(sudoPath, argv, os.Environ())` はプロセス置換（execve(2)）でカーネル任せなので、そのあたりを全部 sudo に委譲できる。
+- **ルール**: 「自プロセスを別コマンドに置き換えたい」が要件なら `syscall.Exec` を選ぶ。「サブプロセスとして走らせて出力を捕まえたい」が要件なら `exec.Command`。この選択は要件で機械的に決まる。
+
+### sudo secure_path を回避するには `os.Executable()` で絶対パスを渡す
+- `syscall.Exec(sudoPath, []string{"sudo", "goup", ...}, ...)` だと sudo は自分の secure_path (`/usr/sbin:/usr/bin:/sbin:/bin`) で `goup` を再解決する。`~/go/bin/goup` は消滅し `sudo: goup: command not found`。
+- `syscall.Exec(sudoPath, []string{"sudo", "/abs/path/to/goup", ...}, ...)` だと sudo は PATH lookup をスキップして直接 exec する。secure_path 非依存になる。
+- **ルール**: sudo 経由で自己再実行するときは `os.Executable()` を必ず argv に載せる。名前だけ渡すのは v0.2.0 の LESSONS で書いた PATH バグの再発。
+
+### 4 変数の分岐は純関数に切り出して table-driven で網羅する
+- 「uid・書き込み可否・TTY 有無・--no-sudo フラグ」の 4 変数から「run / elevate / fail」の 3 分岐を決める。判定と副作用（`syscall.Exec` / `checkWritable` / `os.Stdin.Stat`）が同居した関数だと unit test で網羅できない。
+- `elevationDecision(uid, canWrite, tty, noSudo) decision` を pure function として切り出し、副作用のある `maybeElevate` は判定結果を dispatch するだけにした。11 パターン table-driven で 3 分岐を網羅できる。
+- **ルール**: 副作用のある「起動時判定」ロジックは、副作用を持たない pure な判定関数 + それを dispatch する薄いラッパーに分ける。副作用側は環境依存で unit test 不能でも、判定側は完全網羅できる。
+
+### 「plan は変わる」— empirical evidence が仕様書に勝つ
+- PLAN.md は当初 stdin ModeCharDevice で TTY 判定するとしていた。実装 → smoke test で誤動作を確認 → advisor 相談で反論を受けつつも empirical evidence 優先で `/dev/tty` 方式に切り替え → 再度 CLAUDE.md 設計原則との整合を advisor に指摘されてハイブリッド方式に着地。3 段階の pivot。
+- **ルール**: PLAN / 設計文書は「作業前の仮説」であって「実装で守るべき契約」ではない。実装中に empirical evidence（実行結果）が仮説を否定したら、迷わず pivot し、PLAN と依存する doc（README・CLAUDE.md・implementation-notes）を後追いで揃える。「PLAN に書いてあるから」を根拠に妥協した実装を残さない。
+
 ## Fast-fail 権限チェック / sudo PATH バグ修正 (2026-07-03)
 
 ### sudo は `secure_path` で `$PATH` を剥奪する

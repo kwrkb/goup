@@ -108,6 +108,7 @@ func TestParseInstallArgs(t *testing.T) {
 		args    []string
 		version string
 		pre     bool
+		noSudo  bool
 		wantErr bool
 	}{
 		{name: "version only", args: []string{"1.26.3"}, version: "1.26.3"},
@@ -117,24 +118,59 @@ func TestParseInstallArgs(t *testing.T) {
 		// token, so this used to fail with "install requires exactly one
 		// version argument".
 		{name: "flag after version", args: []string{"1.27rc1", "--pre"}, version: "1.27rc1", pre: true},
+		{name: "no-sudo before version", args: []string{"--no-sudo", "1.26.3"}, version: "1.26.3", noSudo: true},
+		{name: "no-sudo after version", args: []string{"1.26.3", "--no-sudo"}, version: "1.26.3", noSudo: true},
+		{name: "both flags", args: []string{"--pre", "1.27rc1", "--no-sudo"}, version: "1.27rc1", pre: true, noSudo: true},
 		{name: "no args", args: nil, wantErr: true},
 		{name: "two positionals", args: []string{"1.26.3", "1.24.5"}, wantErr: true},
 		{name: "unknown flag", args: []string{"1.26.3", "--nope"}, wantErr: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			v, p, err := parseInstallArgs(c.args)
+			v, p, ns, err := parseInstallArgs(c.args)
 			if c.wantErr {
 				if err == nil {
-					t.Fatalf("expected error, got version=%q pre=%v", v, p)
+					t.Fatalf("expected error, got version=%q pre=%v noSudo=%v", v, p, ns)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("parseInstallArgs: %v", err)
 			}
-			if v != c.version || p != c.pre {
-				t.Fatalf("got (version=%q, pre=%v), want (version=%q, pre=%v)", v, p, c.version, c.pre)
+			if v != c.version || p != c.pre || ns != c.noSudo {
+				t.Fatalf("got (version=%q, pre=%v, noSudo=%v), want (version=%q, pre=%v, noSudo=%v)",
+					v, p, ns, c.version, c.pre, c.noSudo)
+			}
+		})
+	}
+}
+
+func TestParseWriteFlags(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		noSudo  bool
+		wantErr bool
+	}{
+		{name: "empty", args: nil, noSudo: false},
+		{name: "no-sudo", args: []string{"--no-sudo"}, noSudo: true},
+		{name: "positional rejected", args: []string{"1.26.3"}, wantErr: true},
+		{name: "unknown flag", args: []string{"--pre"}, wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := parseWriteFlags("update", c.args)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got noSudo=%v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseWriteFlags: %v", err)
+			}
+			if got != c.noSudo {
+				t.Fatalf("got noSudo=%v, want %v", got, c.noSudo)
 			}
 		})
 	}

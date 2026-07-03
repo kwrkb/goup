@@ -13,7 +13,7 @@ const (
 	defaultBaseURL     = "https://go.dev/dl"
 )
 
-// version is overridden at release time via -ldflags "-X main.version=v0.2.0".
+// version is overridden at release time via -ldflags "-X main.version=v0.3.0".
 // It stays "dev" for `go build` / `go run` so unreleased binaries are obvious.
 var version = "dev"
 
@@ -34,13 +34,11 @@ func main() {
 		flag.NewFlagSet("check", flag.ExitOnError).Parse(os.Args[2:])
 		err = runCheck()
 	case "update":
-		flag.NewFlagSet("update", flag.ExitOnError).Parse(os.Args[2:])
-		err = Update(defaultInstallRoot, defaultBaseURL)
+		err = runUpdate(os.Args[2:])
 	case "install":
 		err = runInstall(os.Args[2:])
 	case "rollback":
-		flag.NewFlagSet("rollback", flag.ExitOnError).Parse(os.Args[2:])
-		err = Rollback(defaultInstallRoot)
+		err = runRollback(os.Args[2:])
 	case "list":
 		err = runList(os.Args[2:])
 	case "help", "-h", "--help":
@@ -66,12 +64,17 @@ func usage() {
 
 Commands:
   check      Show current and latest stable Go versions (no side effects)
-  update     Download, verify, and install the latest stable Go toolchain (requires sudo)
-  install    Install a specific Go version, e.g. goup install 1.26.3 (requires sudo)
-  rollback   Restore the previous Go toolchain from the last backup (requires sudo)
+  update     Download, verify, and install the latest stable Go toolchain
+  install    Install a specific Go version, e.g. goup install 1.26.3
+  rollback   Restore the previous Go toolchain from the last backup
   list       List available Go releases (use --all to include beta/rc)
   version    Print goup version and build platform
-  help       Show this message`)
+  help       Show this message
+
+Write commands (update, install, rollback) need root on /usr/local.
+On an interactive terminal goup re-execs itself via sudo automatically.
+Pass --no-sudo to opt out (CI, scripts) and get the previous fast-fail
+behaviour instead.`)
 }
 
 func runCheck() error {
@@ -96,50 +99,91 @@ func runCheck() error {
 	if current == file.Version {
 		fmt.Println("Up to date.")
 	} else {
-		fmt.Println("Update available. Run `sudo goup update` to install it.")
+		fmt.Println("Update available. Run `goup update` to install it.")
 	}
 
 	return nil
 }
 
-func runInstall(args []string) error {
-	version, pre, err := parseInstallArgs(args)
+func runUpdate(args []string) error {
+	noSudo, err := parseWriteFlags("update", args)
 	if err != nil {
+		return err
+	}
+	if err := maybeElevate(defaultInstallRoot, noSudo); err != nil {
+		return err
+	}
+	return Update(defaultInstallRoot, defaultBaseURL)
+}
+
+func runRollback(args []string) error {
+	noSudo, err := parseWriteFlags("rollback", args)
+	if err != nil {
+		return err
+	}
+	if err := maybeElevate(defaultInstallRoot, noSudo); err != nil {
+		return err
+	}
+	return Rollback(defaultInstallRoot)
+}
+
+func runInstall(args []string) error {
+	version, pre, noSudo, err := parseInstallArgs(args)
+	if err != nil {
+		return err
+	}
+	if err := maybeElevate(defaultInstallRoot, noSudo); err != nil {
 		return err
 	}
 	return Install(defaultInstallRoot, defaultBaseURL, version, pre)
 }
 
-// parseInstallArgs accepts the flag and the version argument in either
+// parseWriteFlags handles the flags shared by write commands with no
+// positional arguments (update, rollback). Currently only --no-sudo.
+func parseWriteFlags(name string, args []string) (noSudo bool, err error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	ns := fs.Bool("no-sudo", false, "do not re-exec via sudo when write access is missing")
+	if perr := fs.Parse(args); perr != nil {
+		return false, perr
+	}
+	if fs.NArg() > 0 {
+		return false, fmt.Errorf("%s does not accept positional arguments", name)
+	}
+	return *ns, nil
+}
+
+// parseInstallArgs accepts the flags and the version argument in either
 // order (`install --pre 1.27rc1` and `install 1.27rc1 --pre` are both
 // valid). Go's flag package stops at the first non-flag token, so we
 // loop-parse: consume flags, then peel off one positional token, then
 // resume flag parsing on the rest.
-func parseInstallArgs(args []string) (version string, pre bool, err error) {
+func parseInstallArgs(args []string) (version string, pre bool, noSudo bool, err error) {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	// Suppress flag's built-in stderr output; main() already prints errors
 	// with a "goup:" prefix, so letting flag print too would double up.
 	fs.SetOutput(io.Discard)
 	preFlag := fs.Bool("pre", false, "allow installing a beta/rc pre-release")
+	noSudoFlag := fs.Bool("no-sudo", false, "do not re-exec via sudo when write access is missing")
 
 	for len(args) > 0 {
 		if perr := fs.Parse(args); perr != nil {
-			return "", false, perr
+			return "", false, false, perr
 		}
 		if fs.NArg() == 0 {
 			break
 		}
 		if version != "" {
-			return "", false, fmt.Errorf("install accepts only one version argument")
+			return "", false, false, fmt.Errorf("install accepts only one version argument")
 		}
 		version = fs.Arg(0)
 		args = fs.Args()[1:]
 	}
 
 	if version == "" {
-		return "", false, fmt.Errorf("install requires a version argument (e.g. `goup install 1.26.3`)")
+		return "", false, false, fmt.Errorf("install requires a version argument (e.g. `goup install 1.26.3`)")
 	}
-	return version, *preFlag, nil
+	return version, *preFlag, *noSudoFlag, nil
 }
 
 func runList(args []string) error {

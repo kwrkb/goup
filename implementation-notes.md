@@ -67,3 +67,44 @@ sudo なしで `goup update` を叩くと、旧実装はダウンロード（〜
 
 - **Rollback 成功時に何も出力しない**: 静かに成功する挙動はユーザーが「本当に動いたか」不安になる。`Update` は "Updated: X -> Y" と出るのに対称性が無い。VerifyLaunch 成功後に `CurrentVersion(installRoot)` を再度呼び、`Rolled back to <version> (from <backup basename>)` を出力するようにした。
 - **`wrapPermissionError` の sudo hint が `sudo goup update` に決め打ち**: `goup rollback` を sudo なしで叩いても "hint: rerun with sudo, e.g. `sudo goup update`" と出て、コマンド名が不正確。`wrapPermissionError` はサブコマンド文脈を知らないので、hint を `(hint: rerun with sudo)` に短縮して汎用化した（既存テストは "sudo" 部分文字列しか見ていないので影響なし）。
+
+## v0.3.0: 対話 TTY での自動 sudo 昇格
+
+### 昇格判定は install 前段（FetchAllReleases より前）で実行する
+
+`install <version>` の書き込み権限判定を「バージョン検証後」ではなく「コマンド起動直後」に置いた。トレードオフは advisor 相談で明示的に確認済み:
+
+- **利点**: 判定ロジックを CLI 層の 1 箇所（`main.go` の `runUpdate`/`runInstall`/`runRollback`）に集約でき、`Install()` の内部フローに sudo 昇格を持ち込まずに済む。CI や非 TTY 環境では go.dev への API コール前に fast-fail するので帯域を無駄にしない。
+- **欠点**: `goup install <typo>` や `goup install <現行バージョン>`（no-op）でも sudo プロンプトが先に出る。今までは検証エラー / no-op で sudo 不要だった。
+- **判断**: CLI 層で 1 箇所に集約するメリット（テスト容易性・実装の単純さ）を優先。sudo プロンプトが不要と判明するのはレアケース（typo か no-op のみ）で、Ctrl-C で抜けるコストは実害無し。将来ユーザーからの苦情が出たら「バージョン検証だけ先にやってから昇格」への分割を検討する。
+
+### `syscall.Exec` + `os.Executable()` で PATH 剥奪を回避
+
+v0.2.0 の実機テストで判明した「`sudo goup update` が `sudo: goup: command not found` で落ちる」（Ubuntu の `secure_path` が `~/go/bin` を落とす）問題への対処。
+
+- **`syscall.Exec` を選んだ理由**: `exec.Command` だと goup が親プロセスとして残り、signal 転送・exit code 中継・stdio 中継を全部書く必要がある。`syscall.Exec` はプロセス置換で、そのあたりを全部 sudo に委譲できる。
+- **`os.Executable()` を渡す理由**: sudo が secure_path を強制すると `argv[0]="goup"` は再度解決不能になる。絶対パスを渡せば sudo は PATH 解決を挟まないので確実。
+- **無限昇格ループの防止**: `elevationDecision` は `uid == 0` を `canWrite` より前で判定する。sudo 経由で再実行されたプロセスは uid=0 なので必ず `decisionRun` を選び、write 判定に関わらず本体処理へ進む。
+
+### TTY 判定はハイブリッド（`/dev/tty` open + stdin ModeCharDevice）
+
+PLAN.md は当初 `os.Stdin.Stat().Mode()&os.ModeCharDevice` 単独で TTY 判定するとしていたが、実機 smoke test で `goup update < /dev/null` が「昇格して sudo に "A terminal is required" を吐かせる」挙動を確認し、方針を見直した。
+
+**候補 A: stdin ModeCharDevice 単独**（PLAN 当初案）: `/dev/null` が character device なので誤陽性。stdin redirect の判定に stdin だけを見るのは根本的に足りない。却下。
+
+**候補 B: `/dev/tty` open 単独**: sudo の実挙動と一致し堅牢だが、CLAUDE.md 設計原則の「非対話環境（CI / cron / **パイプ / redirect**）→ fast-fail」のうちパイプと regular-file redirect が抜け落ちる（controlling terminal がある対話シェルから `cat foo | goup update` や `goup update < script.sh` を叩いた場合、sudo prompt が出てしまう）。CLAUDE.md の意図から外れる。
+
+**採用: 両方を AND する** — (a) `/dev/tty` open 可能、かつ (b) stdin が character device。
+
+- **カバー範囲**: CI / cron / detached script → (a) 落ち。pipe / regular-file redirect → (b) 落ち。対話 TTY → 両方満たして昇格へ流れる。CLAUDE.md 設計原則と 1 対 1 で一致。
+- **既知の穴**: `goup update < /dev/null` は /dev/null 自体が character device なので (b) をすり抜けて昇格へ。stdlib-only 制約下では isatty ioctl 相当（`golang.org/x/term.IsTerminal`）を書かないと閉じられない。受容トレードオフとして README / CLAUDE.md に明記し、スクリプトは `--no-sudo` を明示することを推奨する。
+- **`--no-sudo` の位置付け**: TTY 判定は best-effort。スクリプト・CI で確実に非対話を保証したいなら `--no-sudo` を渡すのが決定的な switch。README でもこちらをリードで案内する。
+- **依存追加なし**（stdlib のみ）。
+
+**テスト方針**: `isTTY()` 本体は環境依存なので runtime テストせず、`elevationDecision(uid, canWrite, tty, noSudo)` の純関数を 11 パターン table-driven で網羅。実際の TTY 判定・sudo 再実行は実機 smoke test にリレー。
+
+### `--no-sudo` フラグの居場所
+
+`update` / `rollback` は元々フラグを取らなかったので `parseWriteFlags` を新設。`install` は既存の `parseInstallArgs` を 4 戻り値（version, pre, noSudo, err）に拡張して同居させた。
+
+- **`update` / `rollback` は positional を拒否**: フラグ以外の引数が来たら error にする。従来は `flag.NewFlagSet` の `ExitOnError` で単に無視されていたが、`--no-sudo` を追加するタイミングで validate も厳格化した。
