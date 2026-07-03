@@ -60,7 +60,7 @@ Commands:
 }
 
 func runCheck() error {
-	current, err := CurrentVersion()
+	current, err := CurrentVersion(defaultInstallRoot)
 	if err != nil {
 		return err
 	}

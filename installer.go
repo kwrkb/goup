@@ -34,9 +34,24 @@ func wrapPermissionError(err error) error {
 		return nil
 	}
 	if errors.Is(err, os.ErrPermission) {
-		return fmt.Errorf("%w (hint: rerun with sudo, e.g. `sudo goup update`)", err)
+		return fmt.Errorf("%w (hint: rerun with sudo)", err)
 	}
 	return err
+}
+
+// checkWritable probes whether the current process can create files in dir
+// by creating and immediately removing a temp file. It reflects the
+// effective filesystem/OS answer (ACLs, read-only mounts, uid) rather than
+// guessing from stat + uid, and lets Update fail fast before spending
+// bandwidth on a download that will be discarded at Backup time.
+func checkWritable(dir string) error {
+	probe, err := os.CreateTemp(dir, ".goup-probe-*")
+	if err != nil {
+		return wrapPermissionError(fmt.Errorf("checking write access to %s: %w", dir, err))
+	}
+	defer os.Remove(probe.Name())
+	defer probe.Close()
+	return nil
 }
 
 // Download fetches url, verifies its sha256 against sha256Hex while streaming
@@ -223,6 +238,10 @@ func Rollback(installRoot string) error {
 		return fmt.Errorf("no backup found under %s", installRoot)
 	}
 
+	if err := checkWritable(installRoot); err != nil {
+		return err
+	}
+
 	sort.Strings(backups)
 	latest := backups[len(backups)-1]
 
@@ -230,7 +249,16 @@ func Rollback(installRoot string) error {
 		return err
 	}
 
-	return VerifyLaunch(installRoot)
+	if err := VerifyLaunch(installRoot); err != nil {
+		return err
+	}
+
+	restored, err := CurrentVersion(installRoot)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Rolled back to %s (from %s)\n", restored, filepath.Base(latest))
+	return nil
 }
 
 // Update downloads, verifies, and installs the latest stable Go release into
@@ -246,7 +274,7 @@ func Update(installRoot, baseURL string) error {
 		return err
 	}
 
-	current, err := CurrentVersion()
+	current, err := CurrentVersion(installRoot)
 	if err != nil {
 		return err
 	}
@@ -254,6 +282,11 @@ func Update(installRoot, baseURL string) error {
 	if current == file.Version {
 		fmt.Printf("Already up to date: %s\n", current)
 		return nil
+	}
+
+	// Probe write access before spending bandwidth on the download.
+	if err := checkWritable(installRoot); err != nil {
+		return err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "goup-*")

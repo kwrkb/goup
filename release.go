@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -67,20 +67,24 @@ func LatestArchive(releases []Release, goos, goarch string) (Release, ReleaseFil
 	return Release{}, ReleaseFile{}, fmt.Errorf("no stable archive found for %s/%s", goos, goarch)
 }
 
-// CurrentVersion returns the version of the Go toolchain actually installed
-// on this machine, e.g. "go1.23.4".
+// CurrentVersion returns the version of the Go toolchain installed at
+// installRoot, e.g. "go1.23.4".
 //
-// GOTOOLCHAIN=local forces the go command to ignore any "toolchain" directive
-// in a nearby go.mod, which would otherwise report a different, auto-downloaded
-// toolchain version instead of the one installed at the system Go root.
-func CurrentVersion() (string, error) {
-	cmd := exec.Command("go", "env", "GOVERSION")
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local")
+// It reads "<installRoot>/go/VERSION" directly, rather than shelling out to
+// `go env GOVERSION`, because (1) sudo strips $PATH so the installed go
+// binary is not resolvable when goup is invoked as `sudo goup update`, and
+// (2) reading the VERSION file bypasses the go.mod toolchain-directive
+// autodownload that would otherwise report a different, transient version.
+func CurrentVersion(installRoot string) (string, error) {
+	versionPath := filepath.Join(installRoot, "go", "VERSION")
 
-	out, err := cmd.Output()
+	data, err := os.ReadFile(versionPath)
 	if err != nil {
-		return "", fmt.Errorf("running go env GOVERSION: %w", err)
+		return "", fmt.Errorf("reading %s: %w", versionPath, err)
 	}
 
-	return strings.TrimSpace(string(out)), nil
+	// The VERSION file's first line is the version (e.g. "go1.26.3");
+	// subsequent lines carry build metadata that we don't care about.
+	line, _, _ := strings.Cut(string(data), "\n")
+	return strings.TrimSpace(line), nil
 }
