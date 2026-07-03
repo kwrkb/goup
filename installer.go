@@ -49,8 +49,8 @@ func checkWritable(dir string) error {
 	if err != nil {
 		return wrapPermissionError(fmt.Errorf("checking write access to %s: %w", dir, err))
 	}
-	probe.Close()
-	os.Remove(probe.Name())
+	defer os.Remove(probe.Name())
+	defer probe.Close()
 	return nil
 }
 

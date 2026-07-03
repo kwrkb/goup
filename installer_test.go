@@ -184,6 +184,10 @@ func TestBackup_SingleGeneration(t *testing.T) {
 // by fmt.Errorf("...: %w", err) at the call site, and the sudo hint never
 // appeared.
 func TestWrapPermissionError_SeesWrappedError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses DAC, so chmod 0o555 cannot trigger EACCES")
+	}
+
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
 	writeVersionMarker(t, root, "goOLD")
@@ -372,6 +376,10 @@ func TestUpdate_AutoRollbackOnExtractFailure(t *testing.T) {
 }
 
 func TestUpdate_ReadOnlyRootFailsBeforeDownload(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses DAC, so chmod 0o555 cannot trigger EACCES")
+	}
+
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
 	writeVersionMarker(t, root, "goOLD")
