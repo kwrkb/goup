@@ -12,6 +12,10 @@ const (
 	defaultBaseURL     = "https://go.dev/dl"
 )
 
+// version is overridden at release time via -ldflags "-X main.version=v0.2.0".
+// It stays "dev" for `go build` / `go run` so unreleased binaries are obvious.
+var version = "dev"
+
 func main() {
 	if runtime.GOOS == "windows" {
 		fmt.Fprintln(os.Stderr, "goup: Windows is not supported; manage the Go toolchain manually.")
@@ -37,6 +41,9 @@ func main() {
 	case "help", "-h", "--help":
 		usage()
 		return
+	case "version", "-v", "--version":
+		fmt.Printf("goup %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		return
 	default:
 		fmt.Fprintf(os.Stderr, "goup: unknown command %q\n\n", os.Args[1])
 		usage()
@@ -56,6 +63,7 @@ Commands:
   check      Show current and latest stable Go versions (no side effects)
   update     Download, verify, and install the latest stable Go toolchain (requires sudo)
   rollback   Restore the previous Go toolchain from the last backup (requires sudo)
+  version    Print goup version and build platform
   help       Show this message`)
 }
 
