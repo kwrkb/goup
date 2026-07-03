@@ -28,10 +28,22 @@ type Release struct {
 	Files   []ReleaseFile `json:"files"`
 }
 
-// FetchReleases retrieves the Go release list from baseURL (e.g. https://go.dev/dl).
+// FetchReleases retrieves the recent Go release list from baseURL
+// (e.g. https://go.dev/dl). Only the last few stable releases are returned;
+// use FetchAllReleases when the full history (including pre-releases) is
+// needed.
 func FetchReleases(baseURL string) ([]Release, error) {
-	url := strings.TrimRight(baseURL, "/") + "/?mode=json"
+	return fetchReleases(strings.TrimRight(baseURL, "/") + "/?mode=json")
+}
 
+// FetchAllReleases retrieves the full Go release history from baseURL,
+// including pre-releases. Used by `goup list` and `goup install <version>`
+// where matching against an older or non-stable release matters.
+func FetchAllReleases(baseURL string) ([]Release, error) {
+	return fetchReleases(strings.TrimRight(baseURL, "/") + "/?mode=json&include=all")
+}
+
+func fetchReleases(url string) ([]Release, error) {
 	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("fetching release list: %w", err)
