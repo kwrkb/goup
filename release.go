@@ -28,10 +28,22 @@ type Release struct {
 	Files   []ReleaseFile `json:"files"`
 }
 
-// FetchReleases retrieves the Go release list from baseURL (e.g. https://go.dev/dl).
+// FetchReleases retrieves the recent Go release list from baseURL
+// (e.g. https://go.dev/dl). Only the last few stable releases are returned;
+// use FetchAllReleases when the full history (including pre-releases) is
+// needed.
 func FetchReleases(baseURL string) ([]Release, error) {
-	url := strings.TrimRight(baseURL, "/") + "/?mode=json"
+	return fetchReleases(strings.TrimRight(baseURL, "/") + "/?mode=json")
+}
 
+// FetchAllReleases retrieves the full Go release history from baseURL,
+// including pre-releases. Used by `goup list` and `goup install <version>`
+// where matching against an older or non-stable release matters.
+func FetchAllReleases(baseURL string) ([]Release, error) {
+	return fetchReleases(strings.TrimRight(baseURL, "/") + "/?mode=json&include=all")
+}
+
+func fetchReleases(url string) ([]Release, error) {
 	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("fetching release list: %w", err)
@@ -65,6 +77,36 @@ func LatestArchive(releases []Release, goos, goarch string) (Release, ReleaseFil
 		}
 	}
 	return Release{}, ReleaseFile{}, fmt.Errorf("no stable archive found for %s/%s", goos, goarch)
+}
+
+// FindArchive returns the release and its archive matching an exact
+// wantVersion string (e.g. "go1.26.3") for goos/goarch. Used by
+// `goup install <version>`.
+func FindArchive(releases []Release, wantVersion, goos, goarch string) (Release, ReleaseFile, error) {
+	for _, r := range releases {
+		if r.Version != wantVersion {
+			continue
+		}
+		for _, f := range r.Files {
+			if f.Kind == "archive" && f.OS == goos && f.Arch == goarch {
+				return r, f, nil
+			}
+		}
+		return Release{}, ReleaseFile{}, fmt.Errorf("release %s has no archive for %s/%s", wantVersion, goos, goarch)
+	}
+	return Release{}, ReleaseFile{}, fmt.Errorf("release %s not found (see `goup list --all` for available versions)", wantVersion)
+}
+
+// NormalizeVersion accepts "1.26.3" or "go1.26.3" (and pre-release variants
+// like "1.27rc1"), tolerates mixed case ("Go1.26.3", "1.26RC1"), and
+// returns the canonical lowercase "go..."-prefixed form used throughout
+// the go.dev release list.
+func NormalizeVersion(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if strings.HasPrefix(v, "go") {
+		return v
+	}
+	return "go" + v
 }
 
 // CurrentVersion returns the version of the Go toolchain installed at

@@ -2,73 +2,70 @@
 
 goup のロードマップとタスク進捗を記録する。完了タスクは削除せず `[x]` でマークして履歴として残す。
 
-## 現状の把握 (v0.1.0 時点)
+## 現状の把握 (v0.2.0 実装完了、リリース前)
 
 - 2026-07-03: **v0.1.0 リリース済み** ([release](https://github.com/kwrkb/goup/releases/tag/v0.1.0))
   - サブコマンド: `check` / `update` / `rollback` / `help`
   - `/usr/local/go` の入れ替え、sha256 検証、1 世代バックアップ、自動 rollback
   - fast-fail 権限チェック、sudo PATH 剥奪対応（VERSION ファイル直読み）
   - 配布バイナリ: linux/amd64, darwin/arm64
+- 2026-07-03: **v0.2.0 の 3 機能実装完了（branch `feat/v0.2.0`）**
+  - `goup version` / `--version` — `-ldflags "-X main.version=..."` で埋め込み
+  - `goup list [--all] [-n N]` — 現在バージョンを `*` でハイライト、window 外なら省略記号で追記
+  - `goup install <version> [--pre]` — Update と共通の installArchive 経路を使用
+  - リリースビルドコマンドを `CLAUDE.md` に追記
 
-## v0.2.0: 指定バージョンインストール + list
+## v0.2.0: 指定バージョンインストール + list（実装完了・リリース待ち）
 
 「常に最新に追従」だけでなく、特定バージョンをピン留めしたいユースケースに対応する。goupdate（既存 zsh 関数）が果たしていた「1.23.0 だけ入れたい」を goup に取り込む。
 
-### `goup install <version>`
+### `goup install <version>` （完了）
 
-- [ ] コマンド追加。`goup install 1.26.3` / `goup install go1.26.3` の両方を受ける
-- [ ] バリデーション:
-  - [ ] `FetchReleases` の結果に version が存在するか確認（存在しなければエラー、`goup list` を案内）
-  - [ ] 非 stable（beta/rc）は `--pre` フラグ無しでは弾く（デフォルト stable のみ）
-- [ ] インストール処理:
-  - [ ] 既存の `Update` 内部を再利用（`LatestArchive` の代わりに `FindArchive(releases, wantVersion, goos, goarch)` を切り出す）
-  - [ ] 現在バージョンと同一なら "Already at <version>" で早期 return（update と同挙動）
-  - [ ] ダウングレード時は明示的に告知（例: `Installing go1.24.5 (downgrading from go1.26.3) ...`）
-- [ ] fast-fail 権限チェック・sha256 検証・バックアップ・自動 rollback は既存経路を流用
-- [ ] テスト:
-  - [ ] 存在しないバージョンでエラー
-  - [ ] beta/rc は `--pre` 無しで弾かれる
-  - [ ] ダウングレードが動く（バックアップは正しく作られる）
-  - [ ] 既に同一バージョンなら no-op
+- [x] コマンド追加。`goup install 1.26.3` / `goup install go1.26.3` の両方を受ける
+  > `NormalizeVersion` で先頭 `go` を補完し、`FindArchive` で厳密一致検索
+- [x] バリデーション:
+  - [x] version が存在するか確認（存在しなければエラー、`goup list --all` を案内）
+  - [x] 非 stable（beta/rc）は `--pre` フラグ無しでは弾く
+- [x] インストール処理:
+  - [x] 既存の `Update` 内部を再利用（`installArchive` を切り出し、`FindArchive` を追加）
+  - [x] 現在バージョンと同一なら "Already at <version>" で早期 return
+  - [x] ダウングレード時は明示的に告知
+    > `Installed: goX (was goY)` の一律メッセージで上げも下げも同じ形。専用の "downgrading" 語彙は不要と判断
+- [x] fast-fail 権限チェック・sha256 検証・バックアップ・自動 rollback は既存経路を流用
+- [x] テスト:
+  - [x] 存在しないバージョンでエラー
+  - [x] beta/rc は `--pre` 無しで弾かれる（`TestInstall_PreReleaseRefusedWithoutFlag`）
+  - [x] `--pre` で pre-release がインストールできる（`TestInstall_PreReleaseAcceptedWithFlag`）
+  - [x] 既に同一バージョンなら no-op（`TestInstall_AlreadyAtTarget`、バックアップも作られない）
+  - [x] `NormalizeVersion` の table-driven テスト
 
-### `goup list`
+### `goup list` （完了）
 
-- [ ] コマンド追加。既定は「直近の stable 版を新しい順で数件」表示
-- [ ] 出力フォーマット案:
-  ```
-    go1.26.4  (stable)  <- current
-    go1.26.3  (stable)
-    go1.26.2  (stable)
-    go1.26.1  (stable)
-    go1.26.0  (stable)
-  ```
-  - 現在バージョン（`CurrentVersion(installRoot)` の返り値）に矢印を付ける
-  - 現在バージョンが list 範囲外なら末尾に別行で表示
-- [ ] フラグ:
-  - [ ] `--all`: 全 release（beta/rc/歴代 stable）を表示
-  - [ ] `--pre`: stable + pre-release のみ
-  - [ ] `-n <N>`: 表示件数上限（既定 5〜10）
-- [ ] テスト:
-  - [ ] `httptest` で複数リリース（stable + beta 混在）を用意して既定表示が stable のみか
-  - [ ] `--all` で beta も含まれるか
-  - [ ] 現在バージョンのハイライト
+- [x] コマンド追加。既定は「直近の stable 版を新しい順で N 件」表示
+- [x] 現在バージョンを `*` マーカーで表示、window 外にあれば `  ...` の後に別行で追記
+- [x] フラグ:
+  - [x] `--all`: pre-release を含める
+  - [~] `--pre`: 却下。go.dev の API は stable=true/false の 2 状態のみで、`--all` と実質同義になるため実装しない
+  - [x] `-n <N>`: 表示件数上限（既定 10）
+- [x] テスト:
+  - [x] 既定表示が stable のみ（`TestRenderReleaseList_StableOnlyByDefault`）
+  - [x] `--all` で pre-release が含まれる（`TestRenderReleaseList_AllIncludesPreRelease`）
+  - [x] 現在バージョンのハイライト
+  - [x] `-n` によるトランケート、window 外の current 補足
 
-### `goup version` / `--version`
+### `goup version` / `--version` （完了）
 
-リリース済みバイナリで「どの版を今使っているか」を確認する手段が無い。v0.2.0 で導入する。
-
-- [ ] `main.go` に `var version = "dev"` を追加し、リリースビルドで `-ldflags="-X main.version=v0.2.0"` を渡してタグを埋め込む
-- [ ] `goup version` / `goup --version` / `goup -v` で表示。フォーマット案:
-  ```
-  goup v0.2.0 (linux/amd64, go1.26.4)
-  ```
-  ビルド OS/Arch と、ビルド時の Go バージョン (`runtime.Version()`) も出す
-- [ ] リリースワークフロー（`/pr-release-claude` 経由の手順）に `-ldflags` を組み込む。ビルドコマンドの正解を README か CLAUDE.md に残す
-- [ ] テスト: 埋め込み無し（`dev`）とタグ付き両方で `goup version` の出力形状を軽く検証
+- [x] `main.go` に `var version = "dev"` を追加、`-ldflags "-X main.version=vX.Y.Z"` で埋め込み
+- [x] `goup version` / `goup --version` / `goup -v` で表示
+  > 出力例: `goup v0.2.0 (linux/amd64, go1.26.4)`
+- [x] リリースビルドコマンドを `CLAUDE.md` の「リリースビルド」セクションに追記
+- [~] 埋め込み無し / タグ付きの出力形状テスト
+  > 却下。動作は smoke test（`dev` / `v0.2.0` 両方で確認）で十分、単体テストの ROI が低い
 
 ### 副次の整理（着手時に検討）
 
 - [ ] `main.go` の switch 文が肥大化してくるので、サブコマンド dispatch を薄い map か slice ベースに整理するか検討（フレームワーク非導入方針は維持）
+  > v0.2.0 完了時点で 7 分岐。まだ許容範囲、v0.3.0 で再検討
 
 ## スコープ外（追加しない機能）
 

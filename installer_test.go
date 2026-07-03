@@ -436,6 +436,206 @@ func TestUpdate_ReadOnlyRootFailsBeforeDownload(t *testing.T) {
 	}
 }
 
+// newMultiReleaseServer serves a small catalog with a stable release
+// (gostable) and a pre-release (goprerc1) for runtime.GOOS/runtime.GOARCH,
+// so Install's version-lookup and --pre gating can be exercised.
+func newMultiReleaseServer(t *testing.T, stableBody, preBody []byte) *httptest.Server {
+	t.Helper()
+
+	stableSum := sha256Hex(stableBody)
+	preSum := sha256Hex(preBody)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("mode") != "json" {
+			http.NotFound(w, r)
+			return
+		}
+		releases := []Release{
+			{
+				Version: "goprerc1",
+				Stable:  false,
+				Files: []ReleaseFile{{
+					Filename: "go-pre.tar.gz",
+					OS:       runtime.GOOS,
+					Arch:     runtime.GOARCH,
+					Version:  "goprerc1",
+					Sha256:   preSum,
+					Kind:     "archive",
+				}},
+			},
+			{
+				Version: "gostable",
+				Stable:  true,
+				Files: []ReleaseFile{{
+					Filename: "go-stable.tar.gz",
+					OS:       runtime.GOOS,
+					Arch:     runtime.GOARCH,
+					Version:  "gostable",
+					Sha256:   stableSum,
+					Kind:     "archive",
+				}},
+			},
+		}
+		if err := json.NewEncoder(w).Encode(releases); err != nil {
+			t.Fatalf("encoding release list: %v", err)
+		}
+	})
+	mux.HandleFunc("/go-stable.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(stableBody)
+	})
+	mux.HandleFunc("/go-pre.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(preBody)
+	})
+
+	return httptest.NewServer(mux)
+}
+
+func TestInstall_SpecificVersion(t *testing.T) {
+	root := t.TempDir()
+	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
+
+	stableArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
+	})
+	preArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
+	})
+
+	srv := newMultiReleaseServer(t, stableArchive, preArchive)
+	defer srv.Close()
+
+	if err := Install(root, srv.URL, "STABLE", false); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if err := VerifyLaunch(root); err != nil {
+		t.Fatalf("VerifyLaunch: %v", err)
+	}
+}
+
+func TestInstall_UnknownVersionErrors(t *testing.T) {
+	root := t.TempDir()
+	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
+
+	stableArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
+	})
+	preArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
+	})
+
+	srv := newMultiReleaseServer(t, stableArchive, preArchive)
+	defer srv.Close()
+
+	err := Install(root, srv.URL, "NOPE", false)
+	if err == nil {
+		t.Fatal("expected error for unknown version")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected 'not found' in error, got: %v", err)
+	}
+}
+
+func TestInstall_PreReleaseRefusedWithoutFlag(t *testing.T) {
+	root := t.TempDir()
+	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
+
+	stableArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
+	})
+	preArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
+	})
+
+	srv := newMultiReleaseServer(t, stableArchive, preArchive)
+	defer srv.Close()
+
+	err := Install(root, srv.URL, "PRErc1", false)
+	if err == nil {
+		t.Fatal("expected pre-release to be refused without --pre")
+	}
+	if !strings.Contains(err.Error(), "pre-release") {
+		t.Fatalf("expected pre-release hint, got: %v", err)
+	}
+}
+
+func TestInstall_PreReleaseAcceptedWithFlag(t *testing.T) {
+	root := t.TempDir()
+	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))
+	writeVersionMarker(t, root, "goOLD")
+
+	stableArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
+	})
+	preArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
+	})
+
+	srv := newMultiReleaseServer(t, stableArchive, preArchive)
+	defer srv.Close()
+
+	if err := Install(root, srv.URL, "PRErc1", true); err != nil {
+		t.Fatalf("Install --pre: %v", err)
+	}
+	if err := VerifyLaunch(root); err != nil {
+		t.Fatalf("VerifyLaunch: %v", err)
+	}
+}
+
+// TestInstall_AlreadyAtTarget confirms the no-op path: no HTTP hits for the
+// archive, no backup created, no VERSION touched.
+func TestInstall_AlreadyAtTarget(t *testing.T) {
+	root := t.TempDir()
+	writeGoScript(t, root, goScript("go version gostable linux/amd64", 0))
+	writeVersionMarker(t, root, "gostable")
+
+	stableArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
+	})
+	preArchive := buildTarGz(t, []tarEntry{
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
+	})
+
+	srv := newMultiReleaseServer(t, stableArchive, preArchive)
+	defer srv.Close()
+
+	if err := Install(root, srv.URL, "STABLE", false); err != nil {
+		t.Fatalf("Install (no-op): %v", err)
+	}
+
+	backups, err := findBackups(root)
+	if err != nil {
+		t.Fatalf("findBackups: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected no backup when target == current, got %v", backups)
+	}
+}
+
+func TestNormalizeVersion(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"1.26.3", "go1.26.3"},
+		{"go1.26.3", "go1.26.3"},
+		{"1.27rc1", "go1.27rc1"},
+		{"go1.27rc1", "go1.27rc1"},
+		{"  1.26.3  ", "go1.26.3"},
+		// Mixed-case inputs should collapse to the canonical lowercase
+		// form so mistyped versions still match the go.dev release list.
+		{"Go1.26.3", "go1.26.3"},
+		{"GO1.26.3", "go1.26.3"},
+		{"1.26RC1", "go1.26rc1"},
+		{"Go1.27RC1", "go1.27rc1"},
+	}
+	for _, c := range cases {
+		if got := NormalizeVersion(c.in); got != c.want {
+			t.Errorf("NormalizeVersion(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestUpdate_Sha256MismatchAbortsBeforeExtract(t *testing.T) {
 	root := t.TempDir()
 	writeGoScript(t, root, goScript("go version goOLD linux/amd64", 0))

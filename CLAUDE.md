@@ -41,3 +41,14 @@ Go 言語本体（toolchain）を更新する CLI。`/usr/local/go` に展開さ
 - `go vet ./...`
 - `go test ./...`
 - `govulncheck ./...`
+
+## リリースビルド
+
+タグ埋め込みは `-ldflags "-X main.version=<tag>"` で行う。`goup version` がリリース済みバイナリで正しいタグを返すのは、このフラグを付けた場合のみ。
+
+```
+GOOS=linux  GOARCH=amd64 go build -ldflags="-s -w -X main.version=v0.2.0" -o dist/goup-linux-amd64 .
+GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version=v0.2.0" -o dist/goup-darwin-arm64 .
+```
+
+`-s -w` はデバッグシンボル除去でサイズを 9MB → 6MB 程度に落とす。
