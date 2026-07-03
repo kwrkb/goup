@@ -103,14 +103,43 @@ func runCheck() error {
 }
 
 func runInstall(args []string) error {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
-	pre := fs.Bool("pre", false, "allow installing a beta/rc pre-release")
-	fs.Parse(args)
-
-	if fs.NArg() != 1 {
-		return fmt.Errorf("install requires exactly one version argument (e.g. `goup install 1.26.3`)")
+	version, pre, err := parseInstallArgs(args)
+	if err != nil {
+		return err
 	}
-	return Install(defaultInstallRoot, defaultBaseURL, fs.Arg(0), *pre)
+	return Install(defaultInstallRoot, defaultBaseURL, version, pre)
+}
+
+// parseInstallArgs accepts the flag and the version argument in either
+// order (`install --pre 1.27rc1` and `install 1.27rc1 --pre` are both
+// valid). Go's flag package stops at the first non-flag token, so we
+// loop-parse: consume flags, then peel off one positional token, then
+// resume flag parsing on the rest.
+func parseInstallArgs(args []string) (version string, pre bool, err error) {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	// Suppress flag's built-in stderr output; main() already prints errors
+	// with a "goup:" prefix, so letting flag print too would double up.
+	fs.SetOutput(io.Discard)
+	preFlag := fs.Bool("pre", false, "allow installing a beta/rc pre-release")
+
+	for len(args) > 0 {
+		if perr := fs.Parse(args); perr != nil {
+			return "", false, perr
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		if version != "" {
+			return "", false, fmt.Errorf("install accepts only one version argument")
+		}
+		version = fs.Arg(0)
+		args = fs.Args()[1:]
+	}
+
+	if version == "" {
+		return "", false, fmt.Errorf("install requires a version argument (e.g. `goup install 1.26.3`)")
+	}
+	return version, *preFlag, nil
 }
 
 func runList(args []string) error {
@@ -150,11 +179,15 @@ func renderReleaseList(w io.Writer, releases []Release, current string, all bool
 	}
 
 	// If the installed toolchain is older than the window just printed,
-	// surface it so `goup list` never hides "what am I running".
+	// surface it so `goup list` never hides "what am I running". Only emit
+	// the "..." separator when we can actually find the current version in
+	// the release list; otherwise we would leave a dangling ellipsis with
+	// nothing after it (e.g. dev builds or ancient versions dropped from
+	// the go.dev API).
 	if current != "" && !currentInList {
-		fmt.Fprintln(w, "  ...")
 		for _, r := range releases {
 			if r.Version == current {
+				fmt.Fprintln(w, "  ...")
 				printRelease(w, r, true)
 				break
 			}

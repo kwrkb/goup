@@ -437,7 +437,7 @@ func TestUpdate_ReadOnlyRootFailsBeforeDownload(t *testing.T) {
 }
 
 // newMultiReleaseServer serves a small catalog with a stable release
-// (goSTABLE) and a pre-release (goPRErc1) for runtime.GOOS/runtime.GOARCH,
+// (gostable) and a pre-release (goprerc1) for runtime.GOOS/runtime.GOARCH,
 // so Install's version-lookup and --pre gating can be exercised.
 func newMultiReleaseServer(t *testing.T, stableBody, preBody []byte) *httptest.Server {
 	t.Helper()
@@ -453,25 +453,25 @@ func newMultiReleaseServer(t *testing.T, stableBody, preBody []byte) *httptest.S
 		}
 		releases := []Release{
 			{
-				Version: "goPRErc1",
+				Version: "goprerc1",
 				Stable:  false,
 				Files: []ReleaseFile{{
 					Filename: "go-pre.tar.gz",
 					OS:       runtime.GOOS,
 					Arch:     runtime.GOARCH,
-					Version:  "goPRErc1",
+					Version:  "goprerc1",
 					Sha256:   preSum,
 					Kind:     "archive",
 				}},
 			},
 			{
-				Version: "goSTABLE",
+				Version: "gostable",
 				Stable:  true,
 				Files: []ReleaseFile{{
 					Filename: "go-stable.tar.gz",
 					OS:       runtime.GOOS,
 					Arch:     runtime.GOARCH,
-					Version:  "goSTABLE",
+					Version:  "gostable",
 					Sha256:   stableSum,
 					Kind:     "archive",
 				}},
@@ -497,10 +497,10 @@ func TestInstall_SpecificVersion(t *testing.T) {
 	writeVersionMarker(t, root, "goOLD")
 
 	stableArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goSTABLE linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
 	})
 	preArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goPRErc1 linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
 	})
 
 	srv := newMultiReleaseServer(t, stableArchive, preArchive)
@@ -520,10 +520,10 @@ func TestInstall_UnknownVersionErrors(t *testing.T) {
 	writeVersionMarker(t, root, "goOLD")
 
 	stableArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goSTABLE linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
 	})
 	preArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goPRErc1 linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
 	})
 
 	srv := newMultiReleaseServer(t, stableArchive, preArchive)
@@ -544,10 +544,10 @@ func TestInstall_PreReleaseRefusedWithoutFlag(t *testing.T) {
 	writeVersionMarker(t, root, "goOLD")
 
 	stableArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goSTABLE linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
 	})
 	preArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goPRErc1 linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
 	})
 
 	srv := newMultiReleaseServer(t, stableArchive, preArchive)
@@ -568,10 +568,10 @@ func TestInstall_PreReleaseAcceptedWithFlag(t *testing.T) {
 	writeVersionMarker(t, root, "goOLD")
 
 	stableArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goSTABLE linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
 	})
 	preArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goPRErc1 linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
 	})
 
 	srv := newMultiReleaseServer(t, stableArchive, preArchive)
@@ -589,14 +589,14 @@ func TestInstall_PreReleaseAcceptedWithFlag(t *testing.T) {
 // archive, no backup created, no VERSION touched.
 func TestInstall_AlreadyAtTarget(t *testing.T) {
 	root := t.TempDir()
-	writeGoScript(t, root, goScript("go version goSTABLE linux/amd64", 0))
-	writeVersionMarker(t, root, "goSTABLE")
+	writeGoScript(t, root, goScript("go version gostable linux/amd64", 0))
+	writeVersionMarker(t, root, "gostable")
 
 	stableArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goSTABLE linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version gostable linux/amd64", 0)},
 	})
 	preArchive := buildTarGz(t, []tarEntry{
-		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goPRErc1 linux/amd64", 0)},
+		{Name: "go/bin/go", Mode: 0o755, Body: goScript("go version goprerc1 linux/amd64", 0)},
 	})
 
 	srv := newMultiReleaseServer(t, stableArchive, preArchive)
@@ -622,6 +622,12 @@ func TestNormalizeVersion(t *testing.T) {
 		{"1.27rc1", "go1.27rc1"},
 		{"go1.27rc1", "go1.27rc1"},
 		{"  1.26.3  ", "go1.26.3"},
+		// Mixed-case inputs should collapse to the canonical lowercase
+		// form so mistyped versions still match the go.dev release list.
+		{"Go1.26.3", "go1.26.3"},
+		{"GO1.26.3", "go1.26.3"},
+		{"1.26RC1", "go1.26rc1"},
+		{"Go1.27RC1", "go1.27rc1"},
 	}
 	for _, c := range cases {
 		if got := NormalizeVersion(c.in); got != c.want {

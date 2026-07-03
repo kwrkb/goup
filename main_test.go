@@ -87,3 +87,55 @@ func TestRenderReleaseList_EmptyIsError(t *testing.T) {
 		t.Fatal("expected error when nothing matches the filter")
 	}
 }
+
+// TestRenderReleaseList_NoEllipsisWhenCurrentMissing guards against a
+// dangling "..." line when the current version is not in the fetched
+// release list at all (dev builds, ancient versions dropped from
+// go.dev). The ellipsis must only appear when a matching row follows.
+func TestRenderReleaseList_NoEllipsisWhenCurrentMissing(t *testing.T) {
+	var buf bytes.Buffer
+	if err := renderReleaseList(&buf, mkReleases(), "goANCIENT", false, 2); err != nil {
+		t.Fatalf("renderReleaseList: %v", err)
+	}
+	if strings.Contains(buf.String(), "...") {
+		t.Errorf("expected no ellipsis when current is not in releases, got:\n%s", buf.String())
+	}
+}
+
+func TestParseInstallArgs(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		version string
+		pre     bool
+		wantErr bool
+	}{
+		{name: "version only", args: []string{"1.26.3"}, version: "1.26.3"},
+		{name: "flag before version", args: []string{"--pre", "1.27rc1"}, version: "1.27rc1", pre: true},
+		// This is the case Codex flagged: --pre appears AFTER the positional
+		// argument. Go's flag package normally stops at the first non-flag
+		// token, so this used to fail with "install requires exactly one
+		// version argument".
+		{name: "flag after version", args: []string{"1.27rc1", "--pre"}, version: "1.27rc1", pre: true},
+		{name: "no args", args: nil, wantErr: true},
+		{name: "two positionals", args: []string{"1.26.3", "1.24.5"}, wantErr: true},
+		{name: "unknown flag", args: []string{"1.26.3", "--nope"}, wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v, p, err := parseInstallArgs(c.args)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got version=%q pre=%v", v, p)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseInstallArgs: %v", err)
+			}
+			if v != c.version || p != c.pre {
+				t.Fatalf("got (version=%q, pre=%v), want (version=%q, pre=%v)", v, p, c.version, c.pre)
+			}
+		})
+	}
+}

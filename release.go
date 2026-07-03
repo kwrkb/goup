@@ -98,9 +98,11 @@ func FindArchive(releases []Release, wantVersion, goos, goarch string) (Release,
 }
 
 // NormalizeVersion accepts "1.26.3" or "go1.26.3" (and pre-release variants
-// like "1.27rc1") and returns the canonical "go..."-prefixed form.
+// like "1.27rc1"), tolerates mixed case ("Go1.26.3", "1.26RC1"), and
+// returns the canonical lowercase "go..."-prefixed form used throughout
+// the go.dev release list.
 func NormalizeVersion(v string) string {
-	v = strings.TrimSpace(v)
+	v = strings.ToLower(strings.TrimSpace(v))
 	if strings.HasPrefix(v, "go") {
 		return v
 	}
