@@ -87,7 +87,7 @@ CLAUDE.md の設計原則「自動 sudo 昇格をしない」を **TTY 対話時
   4. それ以外 → `syscall.Exec("sudo", os.Args...)` で自己再実行
   > `elevate.go` の `maybeElevate` / `elevationDecision` として実装
 - [x] TTY 判定は stdlib のみで実装
-  > `/dev/tty` open 可能 AND stdin が character device のハイブリッド。CI / cron / detached は前者で、pipe / regular-file redirect は後者で fast-fail。既知の穴 `< /dev/null` のみ受容。詳細 `implementation-notes.md`
+  > `/dev/tty` open 可能 AND stdin が character device のハイブリッド。CI / cron / detached は前者で、pipe / regular-file redirect は後者で fast-fail。既知の穴 `< /dev/null` のみ受容。詳細 `LESSONS.md`
 - [x] `sudo` 実行は `syscall.Exec` を選択。プロセス置換で signal / exit code / stdio を sudo に委譲
 - [x] `PATH` 剥奪対策: `os.Executable()` で得た絶対パスを argv に載せる
 
@@ -115,7 +115,7 @@ CLAUDE.md の設計原則「自動 sudo 昇格をしない」を **TTY 対話時
 
 ### 実装メモ
 
-- 昇格判定は install の場合でも `FetchAllReleases` より前で実行する（CLI 層に集約するため）。副作用: `goup install <typo>` / `install <current>` でも sudo プロンプトが先に出る。詳細は `implementation-notes.md` 参照
+- 昇格判定は install の場合でも `FetchAllReleases` より前で実行する（CLI 層に集約するため）。副作用: `goup install <typo>` / `install <current>` でも sudo プロンプトが先に出る。詳細は `LESSONS.md` 参照
 - `usage()` の "requires sudo" 表記も更新（自動昇格することを明記）
 - `runCheck()` の hint も ``Run `sudo goup update` `` → ``Run `goup update` `` に変更
 
