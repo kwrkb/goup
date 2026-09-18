@@ -9,12 +9,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          # stdlib-only: there is no go.sum to key a cache on
+          cache: false
 
       - run: go test ./...
 
       - run: go vet ./...
+
+      # Run via `go run` so govulncheck never lands in go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

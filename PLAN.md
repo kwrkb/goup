@@ -2,7 +2,7 @@
 
 goup のロードマップとタスク進捗を記録する。完了タスクは削除せず `[x]` でマークして履歴として残す。
 
-## 現状の把握 (v0.3.0 リリース済み)
+## 現状の把握 (v0.3.1 リリース済み)
 
 - 2026-07-03: **v0.1.0 リリース済み** ([release](https://github.com/kwrkb/goup/releases/tag/v0.1.0))
   - サブコマンド: `check` / `update` / `rollback` / `help`
@@ -17,6 +17,9 @@ goup のロードマップとタスク進捗を記録する。完了タスクは
   - `goup update` no-op 時は昇格スキップ (PR #3 codex レビュー対応、v0.2.0 挙動と互換)
   - `--help` を 7 原則で再設計。`goup help <cmd>` / `goup <cmd> --help` で per-command help 提供
   - Linux amd64 / macOS arm64 の prebuilt binary を GitHub Release に添付
+- 2026-09-18: **v0.3.1 リリース済み** ([release](https://github.com/kwrkb/goup/releases/tag/v0.3.1))
+  - セキュリティ再ビルドのみ（機能変更なし）。v0.3.0 バイナリ（go1.26.4）に到達可能な stdlib 脆弱性 10 件 → go1.27.1 で再ビルド
+  - `go.mod` の `go` directive を 1.26.8 へ。CI の actions を v7 化、`cache: false`、`govulncheck` を追加
 
 ## v0.2.0: 指定バージョンインストール + list（完了）
 

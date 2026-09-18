@@ -257,3 +257,11 @@ PLAN.md は当初 `os.Stdin.Stat().Mode()&os.ModeCharDevice` 単独で TTY 判�
 `update` / `rollback` は元々フラグを取らなかったので `parseWriteFlags` を新設。`install` は既存の `parseInstallArgs` を 4 戻り値（version, pre, noSudo, err）に拡張して同居させた。
 
 - **`update` / `rollback` は positional を拒否**: フラグ以外の引数が来たら error にする。従来は `flag.NewFlagSet` の `ExitOnError` で単に無視されていたが、`--no-sudo` を追加するタイミングで validate も厳格化した。
+
+## 配布バイナリの stdlib 脆弱性をソーススキャンで見逃した (2026-09-18)
+
+v0.3.0 の配布バイナリ（go1.26.4 ビルド）に到達可能な stdlib 脆弱性が 10 件あった（crypto/tls, net/http, os 等、go1.26.5〜1.26.6 で修正）。一方、手元の `govulncheck ./...` は 0 件だった。ソースモードは「いま PATH にある toolchain」の stdlib で判定するため、toolchain を更新した後では過去にビルドした成果物の状態を反映しない。
+
+- **却下した案**: リリース前チェックをソースモードの `govulncheck ./...` のみで済ませる / go.mod の `go` directive を上げれば成果物も直るとみなす（directive は `go install` 利用者と CI の最低 toolchain を決めるだけで、手元ビルドの stdlib は PATH の `go` で決まる）
+- **決め手**: `govulncheck -mode=binary dist/goup-linux-amd64` が 10 件を報告し、同時刻のソーススキャンは 0 件だった。対応として go1.27.1 で再ビルドした v0.3.1 を出し、`go` directive を 1.26.8 に、CI に `govulncheck` を追加した
+- **覆す条件**: リリース成果物のビルドとバイナリスキャンを CI で自動化し、手元ビルドが配布経路から消えた場合
