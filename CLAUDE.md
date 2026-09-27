@@ -8,7 +8,7 @@ Go 言語本体（toolchain）を更新する CLI。`/usr/local/go` に展開さ
 - **単一静的バイナリ**: `go build` でそのまま配布可能な単一バイナリにする
 - **クロスプラットフォーム**: 対象は WSL2 (Ubuntu) と macOS (Apple Silicon)。Windows ネイティブは非対応（`runtime.GOOS == "windows"` を検出したら明示メッセージを出して終了するのみ）
 - **フレームワーク不使用**: サブコマンド dispatch は標準 `flag` パッケージで実装する。Cobra 等は使わない
-- **対話 TTY のみ自動 sudo 昇格を試みる (v0.3.0〜)**: 書き込みコマンドが権限不足を検知した場合、以下 2 条件を両方満たすときのみ `sudo` で自己再実行する: (a) `/dev/tty` が open 可能（=controlling terminal がある）、(b) stdin が character device である。パスワード入力は `sudo` 自身のプロンプトに委ねる（goup 独自の password 収集はしない）。非対話環境（CI / cron / detached script → (a) 落ち）、パイプ（`| goup`）や regular-file redirect（`goup < file`）→ (b) 落ち、`--no-sudo` フラグ指定時は `hint: rerun with sudo` を出して fast-fail する。既知の pathological case: `goup update < /dev/null` は /dev/null 自体が character device なので昇格側に流れる（stdlib-only 制約下で isatty(3) 相当を書かないための受容トレードオフ、スクリプトは `--no-sudo` を明示すること）。v0.2.0 までは全ケースで fast-fail のみだった
+- **対話 TTY のみ自動 sudo 昇格を試みる**: 書き込みコマンドが権限不足を検知した場合、以下 2 条件を両方満たすときのみ `sudo` で自己再実行する: (a) `/dev/tty` が open 可能（=controlling terminal がある）、(b) stdin が character device である。パスワード入力は `sudo` 自身のプロンプトに委ねる（goup 独自の password 収集はしない）。非対話環境（CI / cron / detached script → (a) 落ち）、パイプ（`| goup`）や regular-file redirect（`goup < file`）→ (b) 落ち、`--no-sudo` フラグ指定時は `hint: rerun with sudo` を出して fast-fail する。既知の pathological case: `goup update < /dev/null` は /dev/null 自体が character device なので昇格側に流れる（stdlib-only 制約下で isatty(3) 相当を書かないための受容トレードオフ、スクリプトは `--no-sudo` を明示すること）
 - **コメントは英語で書く**
 
 ## コマンド
@@ -16,6 +16,7 @@ Go 言語本体（toolchain）を更新する CLI。`/usr/local/go` に展開さ
 - `goup check`: 現在バージョンと最新安定版を比較表示するのみ（副作用なし）
 - `goup update`: ダウンロード → sha256 検証 → バックアップ → 展開 → 起動確認。起動確認に失敗したら自動ロールバック
 - `goup rollback`: 直前のバックアップ（`/usr/local/go.bak.<unixtimestamp>`）から手動復元
+- `goup install <version>` / `goup list` / `goup version`: 詳細は `goup <cmd> --help`（`help.go`）
 
 ## バックアップの世代管理
 
