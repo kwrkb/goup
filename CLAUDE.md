@@ -4,7 +4,7 @@ Go 言語本体（toolchain）を更新する CLI。`/usr/local/go` に展開さ
 
 ## 設計方針
 
-- **stdlib-only**: 外部依存パッケージを追加しない。`net/http`, `encoding/json`, `crypto/sha256`, `archive/tar`, `compress/gzip`, `os`, `os/exec`, `flag`, `testing`, `net/http/httptest` のみ使用
+- **stdlib-only**: 外部依存パッケージを追加しない（Go 標準ライブラリのみ）
 - **単一静的バイナリ**: `go build` でそのまま配布可能な単一バイナリにする
 - **クロスプラットフォーム**: 対象は WSL2 (Ubuntu) と macOS (Apple Silicon)。Windows ネイティブは非対応（`runtime.GOOS == "windows"` を検出したら明示メッセージを出して終了するのみ）
 - **フレームワーク不使用**: サブコマンド dispatch は標準 `flag` パッケージで実装する。Cobra 等は使わない
