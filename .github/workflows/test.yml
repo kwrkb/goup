@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -23,3 +29,29 @@ jobs:
 
       # Run via `go run` so govulncheck never lands in go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  released-binaries:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        asset: [goup-linux-amd64, goup-darwin-arm64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Download latest release binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ matrix.asset }}
+        run: gh release download --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --dir "$RUNNER_TEMP/released-binaries"
+
+      - name: Scan released binary
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary "$RUNNER_TEMP/released-binaries/$ASSET"
