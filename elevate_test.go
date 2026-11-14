@@ -8,12 +8,12 @@ import "testing"
 // gets pinned down because the runtime path can only be smoke-tested.
 func TestElevationDecision(t *testing.T) {
 	cases := []struct {
-		name    string
-		uid     int
-		write   bool
-		tty     bool
-		noSudo  bool
-		want    decision
+		name   string
+		uid    int
+		write  bool
+		tty    bool
+		noSudo bool
+		want   decision
 	}{
 		// root always runs, regardless of everything else.
 		{"root+writable+tty", 0, true, true, false, decisionRun},
