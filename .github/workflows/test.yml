@@ -33,25 +33,29 @@ jobs:
   released-binaries:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        asset: [goup-linux-amd64, goup-darwin-arm64]
     steps:
-      - uses: actions/checkout@v7
-
+      # Binary mode reads the stdlib version embedded in each artifact, so the
+      # host toolchain only needs to build govulncheck; no checkout required.
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: stable
           cache: false
 
-      - name: Download latest release binary
+      # Glob every release asset so newly added platforms are scanned without
+      # editing this workflow (CLAUDE.md requires scanning all artifacts).
+      - name: Download latest release binaries
         env:
           GH_TOKEN: ${{ github.token }}
-          ASSET: ${{ matrix.asset }}
-        run: gh release download --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --dir "$RUNNER_TEMP/released-binaries"
+        run: gh release download --repo "$GITHUB_REPOSITORY" --pattern 'goup-*' --dir "$RUNNER_TEMP/released-binaries"
 
-      - name: Scan released binary
-        env:
-          ASSET: ${{ matrix.asset }}
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary "$RUNNER_TEMP/released-binaries/$ASSET"
+      - name: Scan every released binary
+        run: |
+          status=0
+          for bin in "$RUNNER_TEMP"/released-binaries/goup-*; do
+            # Skip sidecar files such as checksums; binaries have no extension.
+            case "$(basename "$bin")" in *.*) continue ;; esac
+            echo "::group::$(basename "$bin")"
+            go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary "$bin" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
